@@ -76,5 +76,5 @@ async def root():
         "name": "DTS AI Engine",
         "version": "1.0.0",
         "docs": "/docs",
-        "health": "/ai/health",
+        "health": "/api/health",
     }

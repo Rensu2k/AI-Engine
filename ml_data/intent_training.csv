@@ -19,6 +19,16 @@ Find my document status,document_status
 Document tracking,document_status
 Any update on my document?,document_status
 Is there any progress on my document?,document_status
+Has my document been signed?,document_status
+Is my document still pending?,document_status
+Where did my paper go?,document_status
+I want to follow up on my document,document_status
+May I know the status of my request?,document_status
+Can I check where my document is now?,document_status
+Nasaan na yung document ko?,document_status
+Ano na status ng document ko?,document_status
+What office is my document in?,document_status
+Who is currently holding my document?,document_status
 PDID 001,follow_up
 PDID-002,follow_up
 PDID 003,follow_up
@@ -31,6 +41,11 @@ PDID-007,follow_up
 Here is my PDID 010,follow_up
 Its PDID 011,follow_up
 The PDID is 012,follow_up
+PDID 1000,follow_up
+My document number is 100,follow_up
+The number is PDID 050,follow_up
+Its 003,follow_up
+PDID number 015,follow_up
 Hello,greeting
 Hi,greeting
 Hey there,greeting
@@ -43,6 +58,12 @@ Greetings,greeting
 Kamusta,greeting
 Hoy,greeting
 Magandang umaga,greeting
+Magandang hapon,greeting
+Magandang gabi,greeting
+Hey,greeting
+Yo,greeting
+Musta,greeting
+Sup,greeting
 How do I submit a document?,help
 How does this system work?,help
 What can you do?,help
@@ -54,6 +75,27 @@ What services do you offer?,help
 How to track a document?,help
 Guide me,help
 I need assistance,help
+What is a PDID?,help
+How do I find my PDID number?,help
+Where can I get my document ID?,help
+Paano gamitin to?,help
+How do I check my document?,help
+What is this chatbot for?,help
+I want to file a complaint,complaint
+I want to complain,complaint
+This is taking too long,complaint
+My document has been pending for weeks,complaint
+Why is my document taking so long?,complaint
+I am not happy with the service,complaint
+The processing is too slow,complaint
+I want to report a problem,complaint
+This is unacceptable,complaint
+Your service is very slow,complaint
+Nobody is processing my document,complaint
+I have been waiting for months,complaint
+Ang tagal naman ng document ko,complaint
+Bakit ang bagal ng proseso?,complaint
+I need to escalate this issue,complaint
 Tell me a joke,unknown
 What is the weather today?,unknown
 Who is the president?,unknown
@@ -62,3 +104,8 @@ What time is it?,unknown
 Calculate 2 plus 2,unknown
 Order food for me,unknown
 Send an email,unknown
+What is your name?,unknown
+Do you have feelings?,unknown
+Can you sing a song?,unknown
+What is the meaning of life?,unknown
+Who made you?,unknown

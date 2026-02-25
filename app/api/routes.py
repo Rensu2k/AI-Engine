@@ -14,7 +14,7 @@ from app.schemas.chat import (
 from app.services.conversation import process_message, classifier
 from app.config import settings
 
-router = APIRouter(prefix="/ai", tags=["AI Engine"])
+router = APIRouter(prefix="/api", tags=["AI Engine"])
 
 
 @router.post("/chat", response_model=ChatResponse)
