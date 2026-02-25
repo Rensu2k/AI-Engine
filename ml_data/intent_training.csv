@@ -1,0 +1,64 @@
+text,intent
+What is the status of my document?,document_status
+Where is my document?,document_status
+Can you check my document status?,document_status
+I want to know the status of my document,document_status
+Track my document,document_status
+Where is PDID 001?,document_status
+What happened to PDID 002?,document_status
+Check PDID-003 status,document_status
+Status of my document PDID 005,document_status
+Is my document approved?,document_status
+Has my document been processed?,document_status
+What department is my document in?,document_status
+Where is my document right now?,document_status
+Can you look up my document?,document_status
+I need to check on my document,document_status
+Track my document please,document_status
+Find my document status,document_status
+Document tracking,document_status
+Any update on my document?,document_status
+Is there any progress on my document?,document_status
+PDID 001,follow_up
+PDID-002,follow_up
+PDID 003,follow_up
+001,follow_up
+002,follow_up
+It is PDID 004,follow_up
+My PDID is 005,follow_up
+The document ID is PDID 006,follow_up
+PDID-007,follow_up
+Here is my PDID 010,follow_up
+Its PDID 011,follow_up
+The PDID is 012,follow_up
+Hello,greeting
+Hi,greeting
+Hey there,greeting
+Good morning,greeting
+Good afternoon,greeting
+Good evening,greeting
+Hi there,greeting
+Hello there,greeting
+Greetings,greeting
+Kamusta,greeting
+Hoy,greeting
+Magandang umaga,greeting
+How do I submit a document?,help
+How does this system work?,help
+What can you do?,help
+Help me,help
+What are your features?,help
+How do I use this?,help
+Can you help me?,help
+What services do you offer?,help
+How to track a document?,help
+Guide me,help
+I need assistance,help
+Tell me a joke,unknown
+What is the weather today?,unknown
+Who is the president?,unknown
+Play some music,unknown
+What time is it?,unknown
+Calculate 2 plus 2,unknown
+Order food for me,unknown
+Send an email,unknown
