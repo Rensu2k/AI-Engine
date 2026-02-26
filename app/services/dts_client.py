@@ -63,6 +63,7 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         current_office = origin_office
         current_holder = "N/A"
         current_action = "N/A"
+        current_holder_photo = ""
 
         route_summary: List[Dict[str, str]] = []
 
@@ -83,16 +84,22 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
             last_action = "N/A"
             last_holder = "N/A"
+            last_photo = ""
             if employees:
                 last_emp = employees[-1]
                 last_holder = last_emp.get("received_by", "N/A")
                 last_action = last_emp.get("current_operation", "N/A")
+                raw_photo = last_emp.get("received_by_photopath", "") or ""
+                # Build full URL from relative photo path
+                if raw_photo:
+                    last_photo = f"{settings.DTS_API_BASE_URL}/{raw_photo}"
 
             route_summary.append({
                 "office": clean_office,
                 "received_at": received_at,
                 "date_out": date_out if date_out else "Still here",
                 "holder": last_holder,
+                "holder_photo": last_photo,
                 "action": last_action,
             })
 
@@ -100,6 +107,7 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             current_office = clean_office
             current_holder = last_holder
             current_action = last_action
+            current_holder_photo = last_photo
 
         # Determine status
         if is_completed:
@@ -122,6 +130,7 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "total_time": total_time,
             "current_office": current_office,
             "current_holder": current_holder,
+            "current_holder_photo": current_holder_photo,
             "current_action": current_action,
             "route_count": len(route_summary),
             "route_summary": route_summary,

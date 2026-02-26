@@ -155,3 +155,65 @@ DTS_AI/
 ├── tests/                   # Test suite
 └── schema.sql               # MySQL DDL
 ```
+
+## Production Deployment
+
+For production use (100+ simultaneous users), apply the following changes before going live.
+
+### 1. Run with Multiple Workers
+
+Replace `--reload` with `--workers` when deploying. `--reload` is for development only and does not support multi-process mode.
+
+```bash
+uvicorn app.main:app --workers 4 --host 0.0.0.0 --port 8000
+```
+
+A good rule of thumb for `--workers` is `2 × CPU cores + 1`. On a 2-core server, use `--workers 5`.
+
+### 2. Increase the Database Connection Pool
+
+In `app/db/database.py`, increase the pool to match your worker count:
+
+```python
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=10,      # default: 5
+    max_overflow=20,   # default: 10
+    echo=False,
+)
+```
+
+### 3. Enable DTS Response Caching
+
+If multiple users query the same document within a short window, the DTS API gets hit with identical requests. Add a short TTL cache to `app/services/dts_client.py`:
+
+```python
+from cachetools import TTLCache
+
+_doc_cache = TTLCache(maxsize=200, ttl=300)  # 5-minute cache, 200 documents max
+
+async def get_document(pdid: str):
+    pdid_key = pdid.strip().lstrip("0").zfill(3)
+    if pdid_key in _doc_cache:
+        return _doc_cache[pdid_key]
+    # ... existing fetch logic ...
+    _doc_cache[pdid_key] = result
+    return result
+```
+
+Install the dependency:
+
+```bash
+pip install cachetools
+```
+
+### Capacity Reference
+
+| Setup                      | Handles comfortably        |
+| -------------------------- | -------------------------- |
+| Single worker (`--reload`) | ~20 simultaneous users     |
+| 4 workers                  | ~80–100 simultaneous users |
+| 4 workers + DTS caching    | 100+ simultaneous users    |
+
+> Hundreds of users **per day** (not simultaneously) is well within the single-worker default.

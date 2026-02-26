@@ -56,3 +56,12 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     model_intents: list
+
+
+class TTSRequest(BaseModel):
+    """Request body for POST /api/tts."""
+    text: str = Field(..., min_length=1, max_length=5000, description="Text to convert to speech")
+    voice: str = Field(
+        default="fil-PH-AngeloNeural",
+        description="TTS voice. Options: 'fil-PH-AngeloNeural' (Filipino male, default), 'en-US-GuyNeural' (English male)"
+    )

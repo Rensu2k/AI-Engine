@@ -1,6 +1,43 @@
-"""Template-based response generator."""
+"""Template-based response generator with response variation."""
 
+import random
 from typing import Dict, Any, Optional, List
+
+
+# Response templates per intent for natural variation
+_GREETING_RESPONSES = [
+    "Hello! 👋 I'm the Document Tracking Assistant. I can help you check the status of your documents. Just ask me about your document or provide a Tracking No.!",
+    "Hi there! 😊 Welcome to the Document Tracking System. How can I help you today? You can ask me to check your document status or provide a Tracking No.",
+    "Hey! 👋 I'm here to help you track your documents. Just give me your Tracking No. or ask about your document status!",
+]
+
+_THANKS_RESPONSES = [
+    "You're welcome! 😊 If you need anything else, feel free to ask.",
+    "No problem! Happy to help. Let me know if you need to check another document.",
+    "Glad I could help! 😊 Don't hesitate to come back if you need anything.",
+    "You're welcome! If you have more documents to check, just provide another Tracking No.",
+]
+
+_GOODBYE_RESPONSES = [
+    "Goodbye! 👋 Have a great day!",
+    "See you! 👋 Don't hesitate to come back if you need help with your documents.",
+    "Take care! 😊 I'll be here whenever you need to track a document.",
+    "Bye! 👋 Have a wonderful day ahead!",
+]
+
+_COMPLAINT_RESPONSES = [
+    (
+        "I'm sorry to hear you're having trouble with your document. "
+        "If you'd like, I can check the current status of your document — just provide your PDID number.\n\n"
+        "If you wish to formally file a complaint or escalate your concern, "
+        "please visit the DTS office or contact the City Administrator's Office for assistance."
+    ),
+    (
+        "I understand your frustration, and I'm sorry for the inconvenience. "
+        "I can help by checking the latest status of your document — just give me the Tracking No.\n\n"
+        "For formal complaints, please reach out to the City Administrator's Office."
+    ),
+]
 
 
 def generate_response(intent: str, entities: Dict[str, str], document: Optional[Dict[str, Any]] = None, context: dict = None) -> str:
@@ -45,7 +82,7 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
 
     # --- Greeting ---
     if intent == "greeting":
-        return "Hello! I'm the Document Tracking Assistant. I can help you check the status of your documents. Just ask me about your document or provide a Tracking No.!"
+        return random.choice(_GREETING_RESPONSES)
 
     # --- Help ---
     if intent == "help":
@@ -60,12 +97,15 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
 
     # --- Complaint ---
     if intent == "complaint":
-        return (
-            "I'm sorry to hear you're having trouble with your document. "
-            "If you'd like, I can check the current status of your document — just provide your PDID number.\n\n"
-            "If you wish to formally file a complaint or escalate your concern, "
-            "please visit the DTS office or contact the City Administrator's Office for assistance."
-        )
+        return random.choice(_COMPLAINT_RESPONSES)
+
+    # --- Thanks ---
+    if intent == "thanks":
+        return random.choice(_THANKS_RESPONSES)
+
+    # --- Goodbye ---
+    if intent == "goodbye":
+        return random.choice(_GOODBYE_RESPONSES)
 
     # --- Unknown / fallback ---
     return (
@@ -98,10 +138,16 @@ def _format_document_status(document: Dict[str, Any]) -> str:
 
     response = (
         f"📄 **Document Status for PDID {pdid}**\n\n"
+        f"• **Accountable:** {current_holder}\n"
+    )
+
+    response += (
         f"• **Title:** {title}\n"
         f"• **Status:** {status_icon} {status}\n"
         f"• **Current Location:** {current_office}\n"
-        f"• **Current Holder:** {current_holder}\n"
+    )
+
+    response += (
         f"• **Current Action:** {current_action}\n"
         f"• **Origin Office:** {origin_office}\n"
         f"• **Created By:** {created_by}\n"
