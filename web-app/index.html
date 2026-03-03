@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DTS AI Engine Test Client</title>
+    <!-- Google Fonts for Modern Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div class="chat-container">
+        <!-- Header -->
+        <header class="chat-header">
+          <div class="header-content">
+            <div class="header-icon">
+              <!-- Simple AI Sparkle SVG -->
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"
+                />
+              </svg>
+            </div>
+            <div>
+              <h1>DTS AI Agent</h1>
+              <p class="status">● Online and ready to help</p>
+            </div>
+          </div>
+          <div class="settings">
+            <select id="languageSelect" class="lang-select">
+              <option value="en" selected>English</option>
+              <option value="tl">Filipino</option>
+            </select>
+          </div>
+        </header>
+
+        <!-- Messages Area -->
+        <main id="chatWindow" class="chat-window">
+          <div class="message ai-message">
+            <div class="avatar ai-avatar">AI</div>
+            <div class="bubble outline-bubble">
+              Hello! I am the DTS AI Engine. How can I help you regarding your
+              document status today?
+            </div>
+          </div>
+        </main>
+
+        <!-- Input Area -->
+        <footer class="chat-footer">
+          <form id="chatForm" class="chat-form">
+            <input
+              type="text"
+              id="messageInput"
+              placeholder="E.g., What is the status of PDID 001?"
+              autocomplete="off"
+              required
+            />
+            <button type="submit" id="sendBtn" class="send-btn">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="22" x2="11" y1="2" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </form>
+          <div class="footer-note">Testing Environment</div>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Audio element for TTS playback -->
+    <audio id="ttsAudioPlayer" style="display: none"></audio>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

@@ -1,6 +1,6 @@
 # DTS AI Engine
 
-AI-powered Document Tracking Assistant — a conversational REST API that helps users check document status using natural language.
+AI-powered Document Tracking Assistant — a conversational REST API that helps users check document status using natural language. Includes a built-in web chat interface with Text-to-Speech support.
 
 ## Features
 
@@ -10,6 +10,9 @@ AI-powered Document Tracking Assistant — a conversational REST API that helps 
 - 📊 **Retrainable** — Add new training data via CSV or database, then retrain via API
 - 🗄️ **Chat Logging** — All conversations stored in MySQL for analysis
 - 🔌 **DTS Integration Ready** — Mock mode for development, switch to real DTS API via config
+- 🗣️ **Text-to-Speech (TTS)** — AI replies are read aloud using Microsoft Edge TTS (English & Filipino voices)
+- 🌐 **Web Chat Interface** — Vite-based frontend for testing the AI engine in the browser
+- 🛡️ **Rate Limiting** — Per-IP request limits to protect all endpoints from abuse
 
 ## Quick Start
 
@@ -26,7 +29,7 @@ pip install -r requirements.txt
 
 ```bash
 copy .env.example .env
-# Edit .env with your MySQL credentials
+# Edit .env with your MySQL credentials and DTS API settings
 ```
 
 ### 3. Create Database
@@ -53,39 +56,85 @@ uvicorn app.main:app --reload
 
 Open **http://localhost:8000/docs** for the Swagger UI.
 
+---
+
+## Web Chat Interface
+
+A ready-to-use browser client is included in the `web-app/` directory. It connects to the running backend and supports:
+
+- 💬 Multi-turn chat with the AI engine
+- 🗣️ Automatic TTS playback of AI replies
+- 🌐 Language switching (English / Filipino)
+- ⌨️ Animated typing indicator
+
+### Running the Web App
+
+```bash
+cd web-app
+npm install
+npm run dev
+```
+
+Open **http://localhost:5173** in your browser. The Vite dev server proxies API calls to the backend at `http://localhost:8000`.
+
+> The backend must be running before using the web app.
+
+---
+
 ## API Endpoints
 
-| Method | Endpoint     | Description                     |
-| ------ | ------------ | ------------------------------- |
-| POST   | `/ai/chat`   | Send a message, get AI response |
-| POST   | `/ai/train`  | Retrain the ML model            |
-| GET    | `/ai/health` | Health check + model status     |
+| Method | Endpoint      | Rate Limit  | Description                           |
+| ------ | ------------- | ----------- | ------------------------------------- |
+| POST   | `/api/chat`   | 30 / minute | Send a message, get an AI response    |
+| POST   | `/api/train`  | 5 / minute  | Retrain the ML model                  |
+| GET    | `/api/health` | —           | Health check + model status           |
+| POST   | `/api/tts`    | 20 / minute | Convert AI reply text to speech (MP3) |
+
+All rate limits are enforced per client IP address.
 
 ### Chat Example
 
 ```bash
 # Ask about document status
-curl -X POST http://localhost:8000/ai/chat \
+curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "What is the status of my document?"}'
 
 # Response: {"reply": "What is the PDID of your document?", "session_id": "abc-123", ...}
 
 # Provide PDID (use session_id from previous response)
-curl -X POST http://localhost:8000/ai/chat \
+curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "PDID 001", "session_id": "abc-123"}'
-
-# Response: {"reply": "📄 Document Status for PDID 001\n• Status: Processing\n• Current Department: HR\n...", ...}
 ```
+
+### TTS Example
+
+```bash
+curl -X POST http://localhost:8000/api/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Your document is currently being processed.", "voice": "en-US-GuyNeural"}' \
+  --output reply.mp3
+```
+
+**Available voices:**
+
+| Voice                 | Language        |
+| --------------------- | --------------- |
+| `en-US-GuyNeural`     | English (male)  |
+| `fil-PH-AngeloNeural` | Filipino (male) |
+
+The `/api/tts` endpoint also auto-detects Filipino/Tagalog text and switches to the Filipino voice automatically.
 
 ### Retrain the Model
 
 ```bash
-curl -X POST http://localhost:8000/ai/train \
+curl -X POST http://localhost:8000/api/train \
   -H "Content-Type: application/json" \
   -d '{"source": "csv"}'
 ```
+
+---
 
 ## Adding Training Data
 
@@ -99,7 +148,7 @@ text,intent
 "PDID 100",follow_up
 ```
 
-Then retrain: `POST /ai/train {"source": "csv"}`
+Then retrain: `POST /api/train {"source": "csv"}`
 
 ### Option 2: Insert into Database
 
@@ -109,7 +158,9 @@ INSERT INTO training_data (text, intent) VALUES
 ('Check PDID 200 please', 'document_status');
 ```
 
-Then retrain: `POST /ai/train {"source": "database"}`
+Then retrain: `POST /api/train {"source": "database"}`
+
+---
 
 ## Switching to Real DTS API
 
@@ -122,20 +173,25 @@ DTS_API_BASE_URL=http://your-dts-server:8080
 
 The engine expects `GET {DTS_API_BASE_URL}/api/documents/{pdid}` to return document info as JSON.
 
+---
+
 ## Running Tests
 
 ```bash
 pytest tests/ -v
 ```
 
+---
+
 ## Project Structure
 
 ```
 DTS_AI/
 ├── app/
-│   ├── main.py              # FastAPI app
+│   ├── main.py              # FastAPI app entry point
 │   ├── config.py            # Environment settings
-│   ├── api/routes.py        # REST endpoints
+│   ├── rate_limiter.py      # Shared slowapi rate limiter instance
+│   ├── api/routes.py        # REST endpoints (chat, train, health, tts)
 │   ├── ml/                  # ML pipeline
 │   │   ├── intent_classifier.py
 │   │   ├── entity_extractor.py
@@ -149,12 +205,19 @@ DTS_AI/
 │   │   ├── models.py
 │   │   └── database.py
 │   └── schemas/chat.py      # Pydantic models
+├── web-app/                 # Browser chat client (Vite)
+│   ├── index.html
+│   ├── main.js
+│   ├── style.css
+│   └── vite.config.js
 ├── ml_data/                 # Training data
 ├── ml_models/               # Saved models
 ├── scripts/train.py         # Training CLI
 ├── tests/                   # Test suite
 └── schema.sql               # MySQL DDL
 ```
+
+---
 
 ## Production Deployment
 
