@@ -8,6 +8,7 @@ class ChatRequest(BaseModel):
     """Request body for POST /ai/chat."""
     message: str = Field(..., min_length=1, max_length=1000, description="The user's message")
     session_id: Optional[str] = Field(None, description="Session ID for multi-turn conversation. Omit to start a new session.")
+    language: str = Field(default="en", description="Language preference (e.g. 'en', 'tl')")
 
     model_config = {
         "json_schema_extra": {
@@ -32,6 +33,8 @@ class ChatResponse(BaseModel):
     intent: str = Field(..., description="Classified intent of the user's message")
     confidence: float = Field(..., description="Confidence score of the classification")
     entities: Dict[str, str] = Field(default_factory=dict, description="Extracted entities (e.g., PDID)")
+    author: str = Field(default="DTS AI Engine by Clarence Buenaflor, Jester Pastor and Mharjade Enario", description="Engine author watermark")
+    engine_version: str = Field(default="1.0.0", description="Engine version")
 
 
 class TrainRequest(BaseModel):
@@ -62,6 +65,6 @@ class TTSRequest(BaseModel):
     """Request body for POST /api/tts."""
     text: str = Field(..., min_length=1, max_length=5000, description="Text to convert to speech")
     voice: str = Field(
-        default="fil-PH-AngeloNeural",
-        description="TTS voice. Options: 'fil-PH-AngeloNeural' (Filipino male, default), 'en-US-GuyNeural' (English male)"
+        default="en-US-GuyNeural",
+        description="TTS voice. Options: 'en-US-GuyNeural' (English male, default), 'fil-PH-AngeloNeural' (Filipino male)"
     )

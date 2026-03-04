@@ -36,6 +36,10 @@ class ChatLog(Base):
     entities = Column(JSON, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Author watermark — permanently stamps every log entry
+    engine_author = Column(String(100), default="DTS AI Engine by Clarence Buenaflor, Jester Pastor & Mharjade Enario", nullable=False)
+    engine_version = Column(String(20), default="1.0.0", nullable=False)
+
     # Relationship
     session = relationship("Session", back_populates="chat_logs")
 

@@ -6,9 +6,9 @@ from typing import Dict, Any, Optional, List
 
 # Response templates per intent for natural variation
 _GREETING_RESPONSES = [
-    "Hello! 👋 I'm the Document Tracking Assistant. I can help you check the status of your documents. Just ask me about your document or provide a Tracking No.!",
-    "Hi there! 😊 Welcome to the Document Tracking System. How can I help you today? You can ask me to check your document status or provide a Tracking No.",
-    "Hey! 👋 I'm here to help you track your documents. Just give me your Tracking No. or ask about your document status!",
+    "Hello! 👋 I'm the DTS AI Assistant — built by Clarence Buenaflor, Jester Pastor & Mharjade Enario. I can help you check the status of your documents. Just ask me about your document or provide a Tracking No.!",
+    "Hi there! 😊 Welcome to the DTS AI Engine — developed by Clarence Buenaflor, Jester Pastor & Mharjade Enario. How can I help you today? You can ask me to check your document status or provide a Tracking No.",
+    "Hey! 👋 I'm the DTS AI — built by Clarence, Jester & Mharjade — and I'm here to help you track your documents. Just give me your Tracking No. or ask about your document status!",
 ]
 
 _THANKS_RESPONSES = [
@@ -87,6 +87,7 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
     # --- Help ---
     if intent == "help":
         return (
+            "🤖 **DTS AI Engine v1.0** — *Built by Clarence Buenaflor, Jester Pastor & Mharjade Enario*\n\n"
             "Here's how I can help you:\n\n"
             "📄 **Check Document Status** — Ask me something like \"What is the status of my document?\" "
             "and I'll look it up for you.\n\n"
@@ -152,7 +153,7 @@ def _format_document_status(document: Dict[str, Any]) -> str:
         f"• **Origin Office:** {origin_office}\n"
         f"• **Created By:** {created_by}\n"
         f"• **Date Created:** {created_at}\n"
-        f"• **Total Processing Time:** {total_time}\n"
+        f"• **Overall Days on Process:** {total_time}\n"
         f"• **Offices Visited:** {route_count}\n"
     )
 
@@ -165,10 +166,17 @@ def _format_document_status(document: Dict[str, Any]) -> str:
             holder = stop.get("holder", "N/A")
             action = stop.get("action", "N/A")
             date_out = stop.get("date_out", "")
+            tat = stop.get("tat", "N/A")
+
+            # Clean up TAT by stripping trailing spaces or using N/A if empty
+            if tat and tat != "N/A":
+                tat_str = f" [TAT: {tat.strip()}]"
+            else:
+                tat_str = ""
 
             if date_out == "Still here":
-                response += f"  {i}. 📍 **{office}** — {action} (held by {holder}) ← *Currently here*\n"
+                response += f"  {i}. 📍 **{office}** — {action} (held by {holder}){tat_str} ← *Currently here*\n"
             else:
-                response += f"  {i}. {office} — {action} (handled by {holder})\n"
+                response += f"  {i}. {office} — {action} (handled by {holder}){tat_str}\n"
 
     return response

@@ -6,14 +6,17 @@ Main entry point for the AI-powered Document Tracking Assistant.
 
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.api.routes import router
 from app.db.database import engine
 from app.db.models import Base
 from app.services.conversation import classifier
+from app.rate_limiter import limiter
 
 
 @asynccontextmanager
@@ -65,6 +68,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiter
+app.state.limiter = limiter
+
+
+# ── Author watermark middleware ──────────────────────────────────────────
+@app.middleware("http")
+async def add_watermark_headers(request: Request, call_next):
+    """Stamp every HTTP response with author identity headers."""
+    response = await call_next(request)
+    response.headers["X-Powered-By"] = "DTS AI Engine by Clarence Buenaflor, Jester Pastor & Mharjade Enario v1.0"
+    response.headers["X-Author"] = "Clarence Buenaflor, Jester Pastor, Mharjade Enario"
+    return response
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please slow down."},
+    )
+
+
 # Include routes
 app.include_router(router)
 
@@ -75,6 +100,9 @@ async def root():
     return {
         "name": "DTS AI Engine",
         "version": "1.0.0",
+        "built_by": "Clarence Buenaflor, Jester Pastor, Mharjade Enario",
+        "description": "AI-powered chatbot for the Document Tracking System",
+        "license": "Proprietary — built and owned by Clarence Buenaflor, Jester Pastor & Mharjade Enario",
         "docs": "/docs",
         "health": "/api/health",
     }
