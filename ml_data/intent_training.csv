@@ -348,3 +348,27 @@ Later,goodbye
 Peace out,goodbye
 Gtg bye,goodbye
 Kbye,goodbye
+
+Ano ba ang ELA?,lgu_query
+What are the priority programs of the city?,lgu_query
+What are the main projects for the city?,lgu_query
+Executive Legislative Agenda,lgu_query
+Tell me about the city goals,lgu_query
+Sino ang mayor?,lgu_query
+Who is the city mayor?,lgu_query
+What are the services provided by the LGU?,lgu_query
+Ano ang mga programa ng syudad?,lgu_query
+What are the achievements of the local government?,lgu_query
+Can you tell me about the government programs?,lgu_query
+Ano ang vision at mission ng Surigao?,lgu_query
+Vision of the city,lgu_query
+Where are the tourist spots here?,tourism_query
+What are the places to visit in Surigao?,tourism_query
+Tourist spots,tourism_query
+Where to eat?,tourism_query
+Mga pwedeng pasyalan sa syudad,tourism_query
+Best tourist attractions,tourism_query
+Is there a festival here?,tourism_query
+Ano pinagdiriwang sa Surigao?,tourism_query
+Where to travel?,tourism_query
+Anong magandang puntahan dito?,tourism_query
