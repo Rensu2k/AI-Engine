@@ -1,0 +1,181 @@
+# Integration Plan: Engine1 + Engine2 + Shared LLM Service
+
+## Architecture
+
+```
+  Flutter App (Mobile)
+         │
+         ▼
+  Nginx :80  (192.168.168.108)
+    ├── /engine1/*  →  127.0.0.1:8001  (AI-Engine — FastAPI, document tracking)
+    └── /engine2/*  →  127.0.0.1:8002  (Charlie-RAG — Django, LGU services)
+                            │
+                     Both engines call ↓
+                            │
+                  LLM-Service :8003  (FastAPI)
+                    ├── Ollama :11434  (local, primary)
+                    └── Gemini API     (cloud, fallback)
+```
+
+---
+
+## Current State Analysis
+
+### Engine 1 — [AI-Engine](file:///Users/imziiy/Desktop/2026/AI-Engine) (FastAPI) → port 8001
+| Aspect | Current |
+|--------|---------|
+| **Framework** | FastAPI + Uvicorn |
+| **LLM** | ❌ None — uses scikit-learn intent classifier + hardcoded template responses |
+| **Database** | MySQL via SQLAlchemy |
+| **Key endpoints** | `POST /api/chat/`, `POST /api/train`, `POST /api/tts`, `GET /api/health` |
+| **How it works** | Classifies intent → extracts PDID → fetches doc from DTS API → returns template response |
+
+### Engine 2 — `Charlie-RAG-based-Chatbot` (Django) → port 8002
+| Aspect | Current |
+|--------|---------|
+| **Framework** | Django (async views via ASGI) |
+| **LLM** | ✅ Calls Ollama **directly** at `192.168.168.108:11434` via `httpx` |
+| **Database** | SQLite (conversations, tracked documents, uploaded docs) |
+| **RAG** | ChromaDB + BM25 hybrid search, sentence-transformers embeddings |
+| **Key endpoints** | `POST /api/chat/`, `POST /api/chat-stream/`, `POST /api/load-history/`, `POST /api/delete-conversation/` |
+| **How it works** | Searches RAG + tracked docs → builds system prompt → calls Ollama `/api/chat` → streams SSE response |
+
+### LLM-Service (already created) → port 8003
+| Aspect | Status |
+|--------|--------|
+| **Endpoint** | `POST /api/generate` (prompt + system_prompt → response) |
+| **Providers** | Ollama (primary) → Gemini (fallback) |
+| **Health** | `GET /api/providers` |
+
+---
+
+## Proposed Changes
+
+### 1. Engine 2 → Route Ollama calls through LLM-Service
+
+Engine 2 currently calls Ollama **directly** in two places:
+- [call_ollama()](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/charlie/views.py#L368-L387) — non-streaming
+- [chat_stream_api()](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/charlie/views.py#L396-L470) — streaming SSE
+
+#### [MODIFY] [views.py](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/charlie/views.py)
+
+**Non-streaming** ([call_ollama](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/charlie/views.py#368-388)):
+- Replace direct Ollama HTTP call with call to `http://localhost:8003/api/generate`
+- Send [system_prompt](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/charlie/prompts.py#196-276) + [prompt](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/charlie/prompts.py#196-276) (combined from conversation messages)
+- Keep fallback: if LLM-Service is down, try Ollama directly
+
+**Streaming** ([chat_stream_api](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/charlie/views.py#396-471)):
+- ⚠️ The LLM-Service currently only supports non-streaming. Two options:
+  - **Option A**: Add a streaming endpoint to LLM-Service (`/api/generate-stream`)
+  - **Option B**: Keep streaming calls going directly to Ollama (simpler, streaming is latency-sensitive)
+
+> [!IMPORTANT]
+> **Recommended: Option B** — Keep the streaming SSE path calling Ollama directly for now. The non-streaming path goes through LLM-Service for the Gemini fallback benefit. We can add LLM-Service streaming later.
+
+#### [MODIFY] [.env](file:///Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot/.env.example)
+- Add `LLM_SERVICE_URL=http://localhost:8003`
+
+---
+
+### 2. Engine 1 → Add LLM-powered responses via LLM-Service
+
+Engine 1 currently uses template responses. We'll add an LLM mode that enhances responses.
+
+#### [MODIFY] [config.py](file:///Users/imziiy/Desktop/2026/AI-Engine/app/config.py)
+- Add `LLM_SERVICE_URL: str = "http://localhost:8003"`
+- Add `USE_LLM: bool = True` (toggle between template and LLM mode)
+- Change default `PORT` to `8001`
+
+#### [NEW] `app/services/llm_client.py`
+- New module that calls the LLM-Service `/api/generate` endpoint
+- Builds a prompt from: intent + entities + document data + system instructions
+- Falls back to template response if LLM-Service is down
+
+#### [MODIFY] [conversation.py](file:///Users/imziiy/Desktop/2026/AI-Engine/app/services/conversation.py)
+- After step 5 (fetch document), if `USE_LLM=True`:
+  - Build prompt with document data and intent context
+  - Call `llm_client.generate()` → LLM-Service
+  - Fall back to [generate_response()](file:///Users/imziiy/Desktop/2026/AI-Engine/app/services/response_generator.py#43-117) (templates) if LLM fails
+
+---
+
+### 3. LLM-Service → Add streaming endpoint
+
+#### [MODIFY] [router.py](file:///Users/imziiy/Desktop/2026/LLM-Service/app/router.py)
+- Add `POST /api/generate-stream` that forwards Ollama streaming
+
+#### [MODIFY] [ollama.py](file:///Users/imziiy/Desktop/2026/LLM-Service/app/providers/ollama.py)
+- Add `generate_stream()` async generator for SSE token streaming
+
+---
+
+### 4. Nginx Configuration
+
+#### [NEW] `nginx/dts-ai.conf`
+```nginx
+server {
+    listen 80;
+    server_name 192.168.168.108;
+
+    # Engine 1 — Document Tracking (FastAPI)
+    location /engine1/ {
+        proxy_pass http://127.0.0.1:8001/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # Engine 2 — LGU/Charlie RAG (Django)
+    location /engine2/ {
+        proxy_pass http://127.0.0.1:8002/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # SSE streaming support
+        proxy_buffering off;
+        proxy_cache off;
+    }
+}
+```
+
+---
+
+### 5. Flutter App → Point to Nginx
+
+#### [MODIFY] [api_config.dart](file:///Users/imziiy/Desktop/2026/CHATAPP_FLUTTER/lib/core/config/api_config.dart)
+```dart
+static const String engine1Url = 'http://192.168.168.108/engine1';
+static const String engine2Url = 'http://192.168.168.108/engine2';
+// No more direct Ollama reference needed
+```
+
+---
+
+## Implementation Order
+
+| Step | What | Depends on |
+|------|------|------------|
+| 1 | ✅ LLM-Service created | — |
+| 2 | Add streaming to LLM-Service | Step 1 |
+| 3 | Modify Engine 1: add `llm_client.py`, update [conversation.py](file:///Users/imziiy/Desktop/2026/AI-Engine/app/services/conversation.py) | Step 1 |
+| 4 | Modify Engine 2: route non-streaming through LLM-Service | Step 1 |
+| 5 | Nginx config | — |
+| 6 | Update Flutter [api_config.dart](file:///Users/imziiy/Desktop/2026/CHATAPP_FLUTTER/lib/core/config/api_config.dart) | Step 5 |
+| 7 | Test end-to-end | All |
+
+---
+
+## Verification Plan
+
+### Automated Tests
+```bash
+# Engine 1 tests
+cd /Users/imziiy/Desktop/2026/AI-Engine && python -m pytest tests/ -v
+
+# Engine 2 tests
+cd /Users/imziiy/Desktop/2026/Charlie-RAG-based-Chatbot && python test.py
+```
+
+### Manual Verification
+1. **LLM-Service**: `curl -X POST http://localhost:8003/api/generate -H "Content-Type: application/json" -d '{"prompt":"Hello"}'`
+2. **Engine 1 via Nginx**: `curl http://192.168.168.108/engine1/api/health`
+3. **Engine 2 via Nginx**: `curl http://192.168.168.108/engine2/api/chat/ -d '{"message":"hello"}'`
+4. **Flutter app**: Send chat message with both topic types

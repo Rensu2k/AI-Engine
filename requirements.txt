@@ -9,3 +9,10 @@ httpx
 python-dotenv
 pytest
 pytest-asyncio
+langdetect
+deep-translator
+slowapi
+cachetools
+# RAG dependencies
+python-docx
+sentence-transformers

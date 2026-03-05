@@ -1,10 +1,9 @@
-"""API routes for the DTS AI Engine."""
-
 import os
 import re
 import io
 import edge_tts
-from fastapi import APIRouter, Depends, HTTPException
+from langdetect import detect, detect_langs
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DBSession
 
@@ -18,12 +17,14 @@ from app.schemas.chat import (
 )
 from app.services.conversation import process_message, classifier
 from app.config import settings
+from app.rate_limiter import limiter
 
 router = APIRouter(prefix="/api", tags=["AI Engine"])
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, db: DBSession = Depends(get_db)):
+@limiter.limit("30/minute")
+async def chat(request: Request, chat_request: ChatRequest, db: DBSession = Depends(get_db)):
     """
     Main chat endpoint.
 
@@ -33,8 +34,9 @@ async def chat(request: ChatRequest, db: DBSession = Depends(get_db)):
     try:
         result = await process_message(
             db=db,
-            message=request.message,
-            session_id=request.session_id,
+            message=chat_request.message,
+            session_id=chat_request.session_id,
+            language=chat_request.language,
         )
         return ChatResponse(**result)
     except Exception as e:
@@ -42,7 +44,8 @@ async def chat(request: ChatRequest, db: DBSession = Depends(get_db)):
 
 
 @router.post("/train", response_model=TrainResponse)
-async def train(request: TrainRequest = TrainRequest(), db: DBSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def train(request: Request, train_request: TrainRequest = TrainRequest(), db: DBSession = Depends(get_db)):
     """
     Retrain the intent classifier.
 
@@ -54,7 +57,7 @@ async def train(request: TrainRequest = TrainRequest(), db: DBSession = Depends(
         data = None
         csv_path = None
 
-        if request.source == "database":
+        if train_request.source == "database":
             # Load training data from database
             records = db.query(TrainingData).all()
             if not records:
@@ -64,7 +67,7 @@ async def train(request: TrainRequest = TrainRequest(), db: DBSession = Depends(
                 )
             data = [(r.text, r.intent) for r in records]
 
-        elif request.source == "csv":
+        elif train_request.source == "csv":
             csv_path = os.path.join(settings.TRAINING_DATA_DIR, "intent_training.csv")
             if not os.path.exists(csv_path):
                 raise HTTPException(
@@ -133,7 +136,8 @@ def _strip_markdown(text: str) -> str:
 
 
 @router.post("/tts")
-async def text_to_speech(request: TTSRequest):
+@limiter.limit("20/minute")
+async def text_to_speech(request: Request, tts_request: TTSRequest):
     """
     Convert text to speech audio (MP3).
 
@@ -147,19 +151,30 @@ async def text_to_speech(request: TTSRequest):
     - `fil-PH-BlessicaNeural` (Filipino, female)
     - `fil-PH-AngeloNeural` (Filipino, male)
     """
-    # Validate voice
-    voice = request.voice
+    # Strip markdown from text first so detection is clean
+    clean_text = _strip_markdown(tts_request.text)
+
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Text is empty after cleaning.")
+
+    # Validate or auto-detect voice
+    voice = tts_request.voice
+    
+    # Auto-detect language if the user didn't explicitly request the Filipino voice
+    if voice != "fil-PH-AngeloNeural":
+        try:
+            # langdetect returns 'tl' for Tagalog/Filipino
+            detected_lang = detect(clean_text)
+            if detected_lang == 'tl':
+                voice = "fil-PH-AngeloNeural"
+        except Exception:
+            pass # fallback to requested voice if detection fails
+
     if voice not in ALLOWED_VOICES:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid voice '{voice}'. Allowed: {', '.join(sorted(ALLOWED_VOICES))}"
         )
-
-    # Strip markdown from text
-    clean_text = _strip_markdown(request.text)
-
-    if not clean_text:
-        raise HTTPException(status_code=400, detail="Text is empty after cleaning.")
 
     try:
         # Generate audio using edge-tts

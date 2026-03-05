@@ -9,7 +9,11 @@ import json
 import os
 import httpx
 from typing import Optional, Dict, Any, List
+from cachetools import TTLCache
 from app.config import settings
+
+# Cache document lookups for 60 seconds (avoids repeated API calls for the same PDID)
+_document_cache: TTLCache = TTLCache(maxsize=256, ttl=60)
 
 
 def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -85,10 +89,12 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             last_action = "N/A"
             last_holder = "N/A"
             last_photo = ""
+            last_tat = "N/A"
             if employees:
                 last_emp = employees[-1]
                 last_holder = last_emp.get("received_by", "N/A")
                 last_action = last_emp.get("current_operation", "N/A")
+                last_tat = last_emp.get("tat", "N/A")
                 raw_photo = last_emp.get("received_by_photopath", "") or ""
                 # Build full URL from relative photo path
                 if raw_photo:
@@ -101,6 +107,7 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "holder": last_holder,
                 "holder_photo": last_photo,
                 "action": last_action,
+                "tat": last_tat,
             })
 
             # The last route is the current location
@@ -251,6 +258,7 @@ async def get_document(pdid: str) -> Optional[Dict[str, Any]]:
 
     In mock mode: returns from built-in sample data.
     In live mode: calls DTS backend API and parses the response.
+    Results are cached for 60 seconds to reduce redundant API calls.
 
     Args:
         pdid: The document PDID (e.g., "001", "1000")
@@ -266,6 +274,10 @@ async def get_document(pdid: str) -> Optional[Dict[str, Any]]:
         # Try both the zero-padded key and the raw number
         return MOCK_DOCUMENTS.get(pdid_key) or MOCK_DOCUMENTS.get(pdid_clean)
 
+    # Check cache first
+    if pdid_key in _document_cache:
+        return _document_cache[pdid_key]
+
     # Live mode: call DTS backend
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -274,8 +286,11 @@ async def get_document(pdid: str) -> Optional[Dict[str, Any]]:
 
             if response.status_code == 200:
                 raw = response.json()
-                return parse_dts_document(raw)
+                parsed = parse_dts_document(raw)
+                _document_cache[pdid_key] = parsed  # cache the result
+                return parsed
             elif response.status_code == 404:
+                _document_cache[pdid_key] = None  # cache the miss too
                 return None
             else:
                 response.raise_for_status()

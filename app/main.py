@@ -16,6 +16,7 @@ from app.api.routes import router
 from app.db.database import engine
 from app.db.models import Base
 from app.services.conversation import classifier
+from app.services import rag_service
 from app.rate_limiter import limiter
 
 
@@ -42,6 +43,18 @@ async def lifespan(app: FastAPI):
               f"{stats['num_intents']} intents, {stats['training_accuracy']*100:.1f}% accuracy")
     else:
         print("⚠️  No model or training data found. Train the model via POST /ai/train")
+
+    # Initialize RAG index
+    if settings.USE_RAG:
+        print("📚 Initializing RAG knowledge base...")
+        rag_service.initialize_rag(
+            doc_path=settings.RAG_DOCUMENT_PATH,
+            store_dir=settings.RAG_STORE_DIR,
+        )
+        if rag_service.is_ready():
+            print("✅ RAG knowledge base ready (ELA_2025-2028.docx indexed)")
+        else:
+            print("⚠️  RAG initialization failed — will answer without document context")
 
     yield
 

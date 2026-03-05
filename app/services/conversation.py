@@ -6,14 +6,13 @@ Handles:
 2. Intent classification
 3. Entity extraction
 4. DTS API lookup
-5. Response generation
+5. Response generation (LLM or template fallback)
 6. Chat logging
 """
 
 import uuid
-import json
 from datetime import datetime
-from typing import Tuple, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session as DBSession
 
 from app.db.models import Session, ChatLog
@@ -22,6 +21,9 @@ from app.ml.entity_extractor import extract_entities
 from app.services.dts_client import get_document
 from app.services.response_generator import generate_response
 from app.services.chat_logger import log_message
+from app.services.llm_client import generate_llm_response
+from app.services import rag_service
+from app.config import settings
 
 
 # Global classifier instance (loaded at startup)
@@ -60,6 +62,7 @@ async def process_message(
     db: DBSession,
     message: str,
     session_id: Optional[str] = None,
+    language: str = "en",
 ) -> Dict[str, Any]:
     """
     Process a user message through the full AI pipeline.
@@ -70,13 +73,14 @@ async def process_message(
     3. Extract entities (PDID)
     4. Check session context for pending PDID from previous turn
     5. Fetch document from DTS if PDID available
-    6. Generate response
+    6. Generate response (LLM if enabled, template as fallback)
     7. Log messages
 
     Args:
         db: Database session
         message: Raw user message
         session_id: Optional session ID for multi-turn context
+        language: Language hint (kept for API compatibility)
 
     Returns:
         Dict with reply, session_id, intent, confidence, entities
@@ -119,8 +123,27 @@ async def process_message(
     if "pdid" in entities:
         document = await get_document(entities["pdid"])
 
-    # 6. Generate response
-    reply = generate_response(intent, entities, document, context)
+    # 5b. RAG retrieval — fetch relevant ELA document context
+    rag_context = None
+    if settings.USE_RAG and rag_service.is_ready():
+        # Always retrieve for general queries; skip only when DTS document data is already present
+        if not document:
+            rag_context = rag_service.retrieve_context(
+                query=message,
+                top_k=settings.RAG_TOP_K,
+            )
+
+    # 6. Generate response — try LLM first, fall back to templates
+    reply = None
+    if settings.USE_LLM:
+        try:
+            reply = await generate_llm_response(intent, entities, document, context, rag_context=rag_context, user_message=message)
+        except Exception as e:
+            print(f"LLM generation failed, falling back to template: {e}")
+
+    if not reply:
+        # Fallback to template generator
+        reply = generate_response(intent, entities, document, context)
 
     # 7. Log messages
     log_message(db, session.id, "user", message, intent, confidence, entities)

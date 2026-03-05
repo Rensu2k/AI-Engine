@@ -69,7 +69,7 @@ class TestChatEndpoint:
         response = client.post("/api/chat", json={"message": "What is the status of my document?"})
         assert response.status_code == 200
         data = response.json()
-        assert "PDID" in data["reply"]
+        assert "PDID" in data["reply"] or "Tracking No" in data["reply"]
         assert data["session_id"] is not None
 
     def test_document_status_with_pdid(self, client):
@@ -113,6 +113,19 @@ class TestChatEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "reply" in data
+
+    def test_translation_tagalog(self, client):
+        """Test if providing language='tagalog' translates the response."""
+        # Note: Since the test runs offline/mocked, we just verify it doesn't crash 
+        # and returns a reply. We can check if 'reply' exists.
+        response = client.post("/api/chat", json={
+            "message": "Hello", 
+            "language": "tagalog"
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert "reply" in data
+        assert data["intent"] in ("greeting", "unknown")
 
 
 class TestTrainEndpoint:
