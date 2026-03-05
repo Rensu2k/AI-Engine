@@ -96,6 +96,20 @@ def _build_prompt(
             "Tracking No. so you can check on it."
         )
 
+    if intent == "lgu_query":
+        return (
+            "The user is asking about the Local Government Unit (LGU) of Surigao City or its programs. "
+            "Provide a helpful, respectful, and brief answer about the city's commitment to public service "
+            "and suggest contacting the City Information Office or visiting City Hall for specific details."
+        )
+
+    if intent == "tourism_query":
+        return (
+            "The user is asking about tourist spots, places to visit, or food in Surigao City. "
+            "Enthusiastically mention popular spots like Mabua Pebble Beach, Day-asan Floating Village, "
+            "and island hopping. Keep it friendly and concise."
+        )
+
     # RAG-powered general query — answer using retrieved ELA document context
     if rag_context:
         question = user_message or "a question"

@@ -39,6 +39,16 @@ _COMPLAINT_RESPONSES = [
     ),
 ]
 
+_LGU_RESPONSES = [
+    "The City Government of Surigao is committed to providing efficient, transparent, and responsive public service. For specific inquiries about city ordinances, mayor's office programs, or local government services, you can visit the official Surigao City website or the City Hall.",
+    "Surigao City, known as the 'City of Island Adventures,' is governed by dedicated local officials focused on sustainable development and public welfare. If you need details on specific LGU programs, I recommend contacting the City Information Office."
+]
+
+_TOURISM_RESPONSES = [
+    "Surigao City is famous for its beautiful islands and beaches! Some top tourist spots include Mabua Pebble Beach, Day-asan Floating Village, Songkoy Cold Spring, and the various islands like Basul and Silop. It's truly a City of Island Adventures!",
+    "Looking for places to visit in Surigao? You shouldn't miss Mabua Pebble Beach for its unique stone shoreline, the mangrove forests of Day-asan Floating Village, or island hopping around the city. Don't forget to try the local seafood!"
+]
+
 
 def generate_response(intent: str, entities: Dict[str, str], document: Optional[Dict[str, Any]] = None, context: dict = None) -> str:
     """
@@ -107,6 +117,14 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
     # --- Goodbye ---
     if intent == "goodbye":
         return random.choice(_GOODBYE_RESPONSES)
+
+    # --- LGU Query ---
+    if intent == "lgu_query":
+        return random.choice(_LGU_RESPONSES)
+
+    # --- Tourism Query ---
+    if intent == "tourism_query":
+        return random.choice(_TOURISM_RESPONSES)
 
     # --- Unknown / fallback ---
     return (
