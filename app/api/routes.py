@@ -14,7 +14,9 @@ from app.schemas.chat import (
     TrainRequest, TrainResponse,
     HealthResponse,
     TTSRequest,
+    RagIngestRequest, RagIngestResponse,
 )
+from app.services import rag_service
 from app.services.conversation import process_message, classifier
 from app.config import settings
 from app.rate_limiter import limiter
@@ -196,3 +198,27 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
 
+
+@router.post("/rag/ingest", response_model=RagIngestResponse)
+async def rag_ingest(payload: RagIngestRequest):
+    """
+    Ingest a document's extracted text into the live RAG index.
+
+    Called by the Admin Dashboard immediately after a successful upload.
+    The text is chunked, embedded, and appended to the in-memory index.
+    The updated index is also persisted to disk (rag_cache.pkl).
+    """
+    try:
+        chunks_added = rag_service.add_document_to_index(
+            text=payload.text,
+            filename=payload.filename,
+        )
+        return RagIngestResponse(
+            success=True,
+            message=f"Successfully ingested '{payload.filename}'.",
+            chunks_added=chunks_added,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")

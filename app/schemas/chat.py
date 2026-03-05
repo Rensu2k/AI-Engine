@@ -68,3 +68,16 @@ class TTSRequest(BaseModel):
         default="en-US-GuyNeural",
         description="TTS voice. Options: 'en-US-GuyNeural' (English male, default), 'fil-PH-AngeloNeural' (Filipino male)"
     )
+
+
+class RagIngestRequest(BaseModel):
+    """Request body for POST /api/rag/ingest."""
+    filename: str = Field(..., description="Original filename of the uploaded document")
+    text: str = Field(..., min_length=1, description="Extracted plain text from the document")
+
+
+class RagIngestResponse(BaseModel):
+    """Response body for POST /api/rag/ingest."""
+    success: bool
+    message: str
+    chunks_added: int
