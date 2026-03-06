@@ -5,7 +5,7 @@ import requests
 from typing import List, Optional
 import numpy as np
 
-logger = logging.getLogger(_name_)
+logger = logging.getLogger(__name__)
 
 # Lazy-loaded globals — initialized on first use
 _rag_ready: bool = False
