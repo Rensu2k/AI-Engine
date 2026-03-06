@@ -139,7 +139,7 @@ async def process_message(
 
     # 5b. RAG retrieval — fetch relevant ELA document context
     rag_context = None
-    if settings.USE_RAG and rag_service.is_ready():
+    if settings.USE_RAG and rag_service.is_ready() and topic != "docs":
         # Only retrieve RAG context for general queries, unknown intents, or 
         # document queries that didn't have a specific PDID match.
         # Skip for explicit tracking commands where we already have the document, greetings, etc.
@@ -232,7 +232,7 @@ async def stream_message(
         document = await get_document(entities["pdid"])
 
     rag_context = None
-    if settings.USE_RAG and rag_service.is_ready() and not document:
+    if settings.USE_RAG and rag_service.is_ready() and not document and topic != "docs":
         if intent in ("lgu_query", "tourism_query", "unknown", "document_status", "follow_up"):
             rag_context = rag_service.retrieve_context(query=message, top_k=settings.RAG_TOP_K)
 

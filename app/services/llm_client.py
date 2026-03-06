@@ -120,11 +120,9 @@ def _build_prompt(
     """Build the prompt string sent to the LLM."""
     if intent in ("document_status", "follow_up"):
         if not document and "pdid" in entities:
-            return (
-                f"The user asked about document Tracking No. {entities['pdid']}, "
-                f"but no such document was found in the database. "
-                f"Politely inform them it could not be found."
-            )
+            # Return None so conversation.py falls back to the clean "not found" template.
+            # Letting the LLM handle this causes hallucinated verbose suggestions.
+            return None
 
     if intent == "document_status":
         if "pdid" in entities or context.get("pending_intent") == "document_status":
