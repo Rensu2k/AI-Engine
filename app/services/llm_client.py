@@ -138,16 +138,22 @@ def _build_prompt(
             "Tracking No. so you can check on it."
         )
 
-    # RAG-powered general query — answer using retrieved ELA document context
-    if rag_context:
+    # RAG-powered general query or generic LGU question
+    if intent == "lgu_query" or rag_context:
         question = user_message or "a question"
-        return (
-            f"The user asked: \"{question}\"\n\n"
-            f"Use ONLY the following excerpts from our official ELA 2025-2028 document to answer. "
-            f"Do NOT make up information not found below. If the answer isn't in the excerpts, "
-            f"say so politely and suggest they contact the DTS office.\n\n"
-            f"--- Document Excerpts ---\n{rag_context}\n--- End of Excerpts ---\n\n"
-            f"Provide a clear, concise, and helpful answer based on the above."
-        )
+        if rag_context:
+            return (
+                f"The user asked: \"{question}\"\n\n"
+                f"Use ONLY the following excerpts from our official ELA 2025-2028 document to answer. "
+                f"Do NOT make up information not found below. If the answer isn't in the excerpts, "
+                f"say so politely and suggest they contact the DTS office.\n\n"
+                f"--- Document Excerpts ---\n{rag_context}\n--- End of Excerpts ---\n\n"
+                f"Provide a clear, concise, and helpful answer based on the above."
+            )
+        else:
+            return (
+                f"The user is asking a general question about local government services or tracking: \"{question}\"\n\n"
+                f"Please provide a helpful, polite, and brief general response based on your knowledge."
+            )
 
     return None
