@@ -187,10 +187,30 @@ def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
         # 1. Embed the query
         query_emb = _embedding_model.encode([query], convert_to_numpy=True)
         
-        # 2. Compute similarity against all chunks
+        # 2. Compute semantic similarity against all chunks
         similarities = cosine_similarity(query_emb, _embeddings)[0]
         
-        # 3. Get top-K indices (sorted descending)
+        # 3. Hybrid Keyword Boost (Sparse Retrieval)
+        # Extract meaningful keywords from the query (e.g., names, IDs)
+        # Filter out common stop words and short words
+        import re
+        stop_words = {"the", "and", "for", "with", "from", "that", "this", "what", "where", "how", "who", "when", "why", "are", "you", "can", "tell", "about", "status", "document", "documents", "my", "is"}
+        raw_words = re.findall(r'\b[a-zA-Z0-9-]+\b', query.lower())
+        keywords = [w for w in raw_words if len(w) >= 3 and w not in stop_words]
+
+        if keywords:
+            # For each chunk, count how many unique keywords it contains
+            for i, chunk_text in enumerate(_chunks):
+                chunk_lower = chunk_text.lower()
+                matches = sum(1 for kw in keywords if kw in chunk_lower)
+                
+                # Apply a significant boost per exact keyword match
+                if matches > 0:
+                    # +0.3 per keyword match ensures exact name lookups float to the top
+                    # over generic semantic matches
+                    similarities[i] += (matches * 0.3)
+                    
+        # 4. Get top-K indices (sorted descending)
         top_indices = np.argsort(similarities)[-top_k:][::-1]
         
         # 4. Fetch the actual text chunks
