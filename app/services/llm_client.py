@@ -114,16 +114,21 @@ def _build_prompt(
                 f"Politely inform them it could not be found."
             )
 
-        if document:
-            # We must return None here so that conversation.py bypasses the LLM
-            # and falls back to the structured template. The Flutter frontend 
-            # uses regex to parse the exact "**Route History:**" string from the template.
-            # If the LLM rewrites it, the UI breaks.
-            return None
-
-        # If intent is document_status but no PDID/document, the template handles
-        # asking for PDID best, so return None to fall back to template.
-        return None
+    if intent == "document_status":
+        if "pdid" in entities or context.get("pending_intent") == "document_status":
+            if document:
+                # We must return None here so that conversation.py bypasses the LLM
+                # and falls back to the structured template. The Flutter frontend 
+                # uses regex to parse the exact "**Route History:**" string from the template.
+                # If the LLM rewrites it, the UI breaks.
+                return None
+            else:
+                # User gave a PDID but DB returned no document, OR we asked for PDID 
+                # and they responded but it's not a valid format. Fallback to basic template.
+                return None
+        # If intent is document_status but NO pdid was provided and we aren't explicitly pending one,
+        # it might be a request for a generic document from RAG (e.g. "CLR REMEDIAL WORKLIST").
+        # We DO NOT return None yet, we let it fall through to the RAG check below.
 
     if intent == "help":
         return (
