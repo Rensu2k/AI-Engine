@@ -278,7 +278,14 @@ async def stream_message(
         log_message(db, session.id, "user", message, intent, confidence, entities)
         log_message(db, session.id, "bot", reply)
         yield f"data: {json.dumps({'text': reply})}\n\n"
-        yield f"data: [DONE]\n\n"
+        done_meta = json.dumps({
+            "session_id": session.id,
+            "intent": intent,
+            "confidence": round(confidence, 4),
+            "entities": entities,
+            "language": language,
+        })
+        yield f"data: [DONE]{done_meta}\n\n"
         return
 
     full_reply = ""
@@ -321,8 +328,15 @@ async def stream_message(
         # Yield the full template response at once
         yield f"data: {json.dumps({'text': full_reply})}\n\n"
 
-    # Send completion event
-    yield f"data: [DONE]\n\n"
+    # Send completion event with metadata (mirrors non-streaming response format)
+    done_meta = json.dumps({
+        "session_id": session.id,
+        "intent": intent,
+        "confidence": round(confidence, 4),
+        "entities": entities,
+        "language": language,
+    })
+    yield f"data: [DONE]{done_meta}\n\n"
     
     # Log the complete interaction
     log_message(db, session.id, "user", message, intent, confidence, entities)
