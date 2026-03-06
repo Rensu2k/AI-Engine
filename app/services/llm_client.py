@@ -52,6 +52,51 @@ async def generate_llm_response(
         return None
 
 
+async def generate_llm_response_stream(
+    intent: str,
+    entities: Dict[str, str],
+    document: Optional[Dict[str, Any]] = None,
+    context: dict = None,
+    rag_context: Optional[str] = None,
+    user_message: str = "",
+) -> httpx.Response:
+    """
+    Call the external LLM Service to generate a conversational response and stream it.
+    This expects the LLM Service's /api/generate endpoint to support streaming with `stream: True`.
+    If the LLM Service doesn't support streaming, it will just yield the whole response at once.
+    """
+    # Build prompt based on intent
+    prompt = _build_prompt(intent, entities, document, context, rag_context, user_message)
+    if not prompt:
+        return None  # Will fall back to template rules (e.g., asking for PDID)
+
+    system_prompt = (
+        "You are the DTS AI Assistant built by Clarence Buenaflor, Jester Pastor & Mharjade Enario. "
+        "You help users track their documents in the Document Tracking System. "
+        "Be friendly, helpful, and concise. "
+        "If document data is provided, use it to accurately answer the user's question. "
+        "Do NOT hallucinate document statuses — only use the data provided."
+    )
+
+    try:
+        # We don't use 'async with httpx.AsyncClient()' here because we need to yield from the stream
+        client = httpx.AsyncClient(timeout=35.0)
+        request = client.build_request(
+            "POST",
+            f"{settings.LLM_SERVICE_URL}/api/generate",
+            json={
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+                "stream": True  # Request streaming if supported
+            }
+        )
+        # Yield the response so the caller can stream the content
+        return await client.send(request, stream=True)
+    except Exception as e:
+        logger.error(f"Error calling LLM Service Stream: {e}")
+        return None
+
+
 def _build_prompt(
     intent: str,
     entities: Dict[str, str],
@@ -94,20 +139,6 @@ def _build_prompt(
             "The user is expressing a complaint or frustration. Be empathetic, apologize "
             "for any inconvenience, and suggest they visit the DTS office or provide their "
             "Tracking No. so you can check on it."
-        )
-
-    if intent == "lgu_query":
-        return (
-            "The user is asking about the Local Government Unit (LGU) of Surigao City or its programs. "
-            "Provide a helpful, respectful, and brief answer about the city's commitment to public service "
-            "and suggest contacting the City Information Office or visiting City Hall for specific details."
-        )
-
-    if intent == "tourism_query":
-        return (
-            "The user is asking about tourist spots, places to visit, or food in Surigao City. "
-            "Enthusiastically mention popular spots like Mabua Pebble Beach, Day-asan Floating Village, "
-            "and island hopping. Keep it friendly and concise."
         )
 
     # RAG-powered general query — answer using retrieved ELA document context

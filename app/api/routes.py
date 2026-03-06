@@ -14,7 +14,9 @@ from app.schemas.chat import (
     TrainRequest, TrainResponse,
     HealthResponse,
     TTSRequest,
+    RagIngestRequest, RagIngestResponse,
 )
+from app.services import rag_service
 from app.services.conversation import process_message, classifier
 from app.config import settings
 from app.rate_limiter import limiter
@@ -29,7 +31,7 @@ async def chat(request: Request, chat_request: ChatRequest, db: DBSession = Depe
     Main chat endpoint.
 
     Send a message and get an AI-powered response about document status.
-    Pass `session_id` from a previous response to continue a multi-turn conversation.
+    Pass session_id from a previous response to continue a multi-turn conversation.
     """
     try:
         result = await process_message(
@@ -42,6 +44,31 @@ async def chat(request: Request, chat_request: ChatRequest, db: DBSession = Depe
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
+from app.services.conversation import stream_message
+
+@router.post("/chat/stream")
+@limiter.limit("30/minute")
+async def chat_stream(request: Request, chat_request: ChatRequest, db: DBSession = Depends(get_db)):
+    """
+    Streaming chat endpoint using Server-Sent Events (SSE).
+
+    Yields chunks of the AI's response as they are generated.
+    """
+    try:
+        # FastAPI's StreamingResponse lets us yield an async generator.
+        # media_type="text/event-stream" tells the client to expect SSE.
+        return StreamingResponse(
+            stream_message(
+                db=db,
+                message=chat_request.message,
+                session_id=chat_request.session_id,
+                language=chat_request.language,
+            ),
+            media_type="text/event-stream"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing stream: {str(e)}")
+
 
 @router.post("/train", response_model=TrainResponse)
 @limiter.limit("5/minute")
@@ -50,8 +77,8 @@ async def train(request: Request, train_request: TrainRequest = TrainRequest(), 
     Retrain the intent classifier.
 
     Source options:
-    - `csv`: Train from ml_data/intent_training.csv
-    - `database`: Train from the training_data table in the database
+    - csv: Train from ml_data/intent_training.csv
+    - database: Train from the training_data table in the database
     """
     try:
         data = None
@@ -145,11 +172,11 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
     Supports English and Filipino voices.
 
     Available voices:
-    - `en-US-JennyNeural` (English, female - default)
-    - `en-US-AriaNeural` (English, female)
-    - `en-US-GuyNeural` (English, male)
-    - `fil-PH-BlessicaNeural` (Filipino, female)
-    - `fil-PH-AngeloNeural` (Filipino, male)
+    - en-US-JennyNeural (English, female - default)
+    - en-US-AriaNeural (English, female)
+    - en-US-GuyNeural (English, male)
+    - fil-PH-BlessicaNeural (Filipino, female)
+    - fil-PH-AngeloNeural (Filipino, male)
     """
     # Strip markdown from text first so detection is clean
     clean_text = _strip_markdown(tts_request.text)
@@ -196,3 +223,27 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
 
+
+@router.post("/rag/ingest", response_model=RagIngestResponse)
+async def rag_ingest(payload: RagIngestRequest):
+    """
+    Ingest a document's extracted text into the live RAG index.
+
+    Called by the Admin Dashboard immediately after a successful upload.
+    The text is chunked, embedded, and appended to the in-memory index.
+    The updated index is also persisted to disk (rag_cache.pkl).
+    """
+    try:
+        chunks_added = rag_service.add_document_to_index(
+            text=payload.text,
+            filename=payload.filename,
+        )
+        return RagIngestResponse(
+            success=True,
+            message=f"Successfully ingested '{payload.filename}'.",
+            chunks_added=chunks_added,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")

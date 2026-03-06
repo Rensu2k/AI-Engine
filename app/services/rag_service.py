@@ -21,6 +21,7 @@ _rag_ready: bool = False
 _chunks: List[str] = []
 _embeddings = None
 _embedding_model = None
+_store_dir: str = ""   # set during initialize_rag; used by add_document_to_index
 
 
 def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str]:
@@ -101,7 +102,9 @@ def initialize_rag(doc_path: str, store_dir: str) -> None:
     Initialize the RAG index at application startup.
     Call this once from main.py lifespan so the index is ready before requests come in.
     """
-    global _rag_ready
+    global _rag_ready, _store_dir
+
+    _store_dir = store_dir  # remember for later ingest calls
 
     if not os.path.exists(doc_path):
         logger.warning(f"[RAG] Document not found at '{doc_path}'. RAG disabled.")
@@ -114,6 +117,49 @@ def initialize_rag(doc_path: str, store_dir: str) -> None:
     except Exception as e:
         logger.error(f"[RAG] Failed to initialize: {e}")
         _rag_ready = False
+
+
+def add_document_to_index(text: str, filename: str = "unknown") -> int:
+    """
+    Ingest raw text from an uploaded document into the live RAG index.
+
+    - Chunks the text using the same parameters as the initial build.
+    - Generates embeddings and appends them to the in-memory arrays.
+    - Persists the updated index to rag_cache.pkl so it survives restarts.
+
+    Returns:
+        Number of new chunks that were added.
+    """
+    global _chunks, _embeddings, _embedding_model, _rag_ready
+
+    if _embedding_model is None:
+        logger.info("[RAG] Embedding model is not loaded. Initializing now...")
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    new_chunks = _chunk_text(text, chunk_size=500, overlap=100)
+    if not new_chunks:
+        logger.warning(f"[RAG] No chunks extracted from '{filename}'. Skipping.")
+        return 0
+
+    new_embeddings = _embedding_model.encode(new_chunks, convert_to_numpy=True)
+
+    _chunks.extend(new_chunks)
+    if _embeddings is None:
+        _embeddings = new_embeddings
+    else:
+        _embeddings = np.vstack([_embeddings, new_embeddings])
+
+    _rag_ready = True
+
+    # Persist the updated index
+    cache_path = os.path.join(_store_dir, "rag_cache.pkl")
+    os.makedirs(_store_dir, exist_ok=True)
+    with open(cache_path, "wb") as f:
+        pickle.dump({"chunks": _chunks, "embeddings": _embeddings}, f)
+
+    logger.info(f"[RAG] Added {len(new_chunks)} chunks from '{filename}' to index and saved cache.")
+    return len(new_chunks)
 
 
 def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:

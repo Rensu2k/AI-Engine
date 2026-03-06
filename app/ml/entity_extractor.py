@@ -15,6 +15,8 @@ PDID_PATTERNS = [
     re.compile(r"(?i)\bpdid[\s\-_]*(\d{1,10})\b"),
     # PDID with connector words: "My PDID is 007", "PDID number 003"
     re.compile(r"(?i)\bpdid\s+(?:is|number|no\.?|num)\s+(\d{1,10})\b"),
+    # Tracking number keywords
+    re.compile(r"(?i)\b(?:document|tracking)[\w\s]*?(?:no\.?|number)?[\s\-_]*(\d{1,10})\b"),
     # Just a standalone number when in context of document tracking (fallback)
     # Only matches if the message is very short (likely a follow-up with just the number)
     re.compile(r"^\s*(\d{1,10})\s*$"),

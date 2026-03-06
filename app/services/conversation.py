@@ -156,3 +156,97 @@ async def process_message(
         "confidence": round(confidence, 4),
         "entities": entities,
     }
+
+import json
+
+async def stream_message(
+    db: DBSession,
+    message: str,
+    session_id: Optional[str] = None,
+    language: str = "en",
+):
+    """
+    Process a user message and yield Server-Sent Events (SSE).
+    """
+    # 1. Session setup
+    session = get_or_create_session(db, session_id)
+    intent, confidence = classifier.predict(message)
+    entities = extract_entities(message)
+
+    context = dict(session.context) if session.context else {}
+    pending_intent = context.get("pending_intent")
+
+    if "pdid" in entities and pending_intent == "document_status":
+        intent = "follow_up"
+        update_session_context(db, session, "pending_intent", None)
+    if intent == "document_status" and "pdid" not in entities:
+        update_session_context(db, session, "pending_intent", "document_status")
+    if "pdid" not in entities and context.get("last_pdid"):
+        if intent in ("document_status", "follow_up"):
+            entities["pdid"] = context["last_pdid"]
+    if "pdid" in entities:
+        update_session_context(db, session, "last_pdid", entities["pdid"])
+
+    document = None
+    if "pdid" in entities:
+        document = await get_document(entities["pdid"])
+
+    rag_context = None
+    if settings.USE_RAG and rag_service.is_ready() and not document:
+        rag_context = rag_service.retrieve_context(query=message, top_k=settings.RAG_TOP_K)
+
+    # First yield the metadata (intent, entities, sessionid)
+    metadata = {
+        "session_id": session.id,
+        "intent": intent,
+        "confidence": round(confidence, 4),
+        "entities": entities,
+    }
+    yield f"data: {json.dumps(metadata)}\n\n"
+
+    full_reply = ""
+    
+    # Check if we can stream from LLM
+    if settings.USE_LLM:
+        from app.services.llm_client import generate_llm_response_stream
+        
+        # This returns an httpx.Response object set to stream
+        response_stream = await generate_llm_response_stream(
+            intent, entities, document, context, rag_context=rag_context, user_message=message
+        )
+        
+        if response_stream:
+            try:
+                # Iterate asynchronously over the response stream line-by-line
+                async for chunk in response_stream.aiter_lines():
+                    if chunk:
+                        try:
+                            # Ollama returns JSON lines, we need to extract the "response" key 
+                            # or just pass the text forward. 
+                            # Since the frontend only accepts {"text": "..."} we need to parse it if it's JSON from Ollama
+                            chunk_data = json.loads(chunk)
+                            text_chunk = chunk_data.get("response", chunk)
+                        except json.JSONDecodeError:
+                            text_chunk = chunk
+                            
+                        full_reply += text_chunk
+                        # Send text chunks as they arrive
+                        yield f"data: {json.dumps({'text': text_chunk})}\n\n"
+            except Exception as e:
+                print(f"Error streaming LLM response: {e}")
+            finally:
+                # Always safely close the httpx stream
+                await response_stream.aclose()
+                
+    # If no LLM streaming occurred/succeeded, fallback to template
+    if not full_reply:
+        full_reply = generate_response(intent, entities, document, context)
+        # Yield the full template response at once
+        yield f"data: {json.dumps({'text': full_reply})}\n\n"
+
+    # Send completion event
+    yield f"data: [DONE]\n\n"
+    
+    # Log the complete interaction
+    log_message(db, session.id, "user", message, intent, confidence, entities)
+    log_message(db, session.id, "bot", full_reply)

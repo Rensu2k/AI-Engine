@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     DTS_MOCK_MODE: bool = True
 
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
+    CORS_ORIGINS: str = "http://localhost:3000"
 
     # Server
     HOST: str = "0.0.0.0"
