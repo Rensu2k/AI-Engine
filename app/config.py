@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # Server
     HOST: str = "0.0.0.0"
-    PORT: int = 8001
+    PORT: int = 8000
 
     # LLM Service Integration
     USE_LLM: bool = True
