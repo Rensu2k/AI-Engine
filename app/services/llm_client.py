@@ -149,7 +149,7 @@ def _build_prompt(
         if rag_context:
             return (
                 f"The user asked: \"{question}\"\n\n"
-                f"Use ONLY the following excerpts from our official ELA 2025-2028 document to answer. "
+                f"Use ONLY the following excerpts from our official knowledge base and uploaded documents to answer. "
                 f"Do NOT make up information not found below. If the answer isn't in the excerpts, "
                 f"say so politely and suggest they contact the DTS office.\n\n"
                 f"--- Document Excerpts ---\n{rag_context}\n--- End of Excerpts ---\n\n"
