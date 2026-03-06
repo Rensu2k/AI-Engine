@@ -70,13 +70,25 @@ async def generate_llm_response_stream(
     if not prompt:
         return None  # Will fall back to template rules (e.g., asking for PDID)
 
-    system_prompt = (
-        "You are the DTS AI Assistant built by Clarence Buenaflor, Jester Pastor & Mharjade Enario. "
-        "You help users track their documents in the Document Tracking System. "
-        "Be friendly, helpful, and concise. "
-        "If document data is provided, use it to accurately answer the user's question. "
-        "Do NOT hallucinate document statuses — only use the data provided."
-    )
+    # Build context-aware system prompt — if we have RAG data, shift to knowledge assistant mode
+    if rag_context:
+        system_prompt = (
+            "You are the DTS AI Assistant, a helpful assistant for the local government built by "
+            "Clarence Buenaflor, Jester Pastor & Mharjade Enario. "
+            "When document excerpts are provided in the user prompt, your ONLY job is to answer "
+            "the user's question using EXCLUSIVELY that data. "
+            "Do NOT say you cannot help. Do NOT ask for a Tracking Number. "
+            "Do NOT make up information not found in the excerpts. "
+            "Respond concisely with what you find."
+        )
+    else:
+        system_prompt = (
+            "You are the DTS AI Assistant built by Clarence Buenaflor, Jester Pastor & Mharjade Enario. "
+            "You help users track their documents in the Document Tracking System. "
+            "Be friendly, helpful, and concise. "
+            "If document data is provided, use it to accurately answer the user's question. "
+            "Do NOT hallucinate document statuses — only use the data provided."
+        )
 
     try:
         # We don't use 'async with httpx.AsyncClient()' here because we need to yield from the stream
@@ -143,8 +155,19 @@ def _build_prompt(
             "Tracking No. so you can check on it."
         )
 
+    # Handle follow_up that has no PDID — if RAG context found, treat it as a knowledge search.
+    # This handles "HOW ABOUT [name]?" style queries mid-conversation.
+    if intent == "follow_up" and "pdid" not in entities and rag_context:
+        return (
+            f"The user is continuing a conversation and asked: \"{user_message or 'a question'}\"\n\n"
+            f"Search the document excerpts below and find relevant information. "
+            f"Do NOT ask for a Tracking Number. Simply answer what you find.\n\n"
+            f"--- Document Excerpts ---\n{rag_context}\n--- End of Excerpts ---\n\n"
+            f"Answer concisely from the excerpts above."
+        )
+
     # RAG-powered general query or generic LGU question
-    if intent == "lgu_query" or rag_context:
+    if intent in ("lgu_query", "follow_up") or rag_context:
         question = user_message or "a question"
         if rag_context:
             return (
