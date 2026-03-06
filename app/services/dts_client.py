@@ -62,10 +62,23 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # --- Parse routes to find current location ---
         routes = []
         details = data.get("details")
-        if isinstance(details, dict):
-            raw_routes = details.get("routes", []) if details else []
-        else:
-            raw_routes = []
+        raw_routes = []
+
+        if isinstance(details, list):
+            # Laravel may return details as a list of route objects directly
+            # or as a list with one element that has a 'routes' key
+            if details:
+                first = details[0]
+                if isinstance(first, dict) and "routes" in first:
+                    raw_routes = first.get("routes", [])
+                elif isinstance(first, dict) and "office" in first:
+                    # The list IS the routes (each element is a route stop)
+                    raw_routes = details
+        elif isinstance(details, dict):
+            raw_routes = details.get("routes", [])
+        elif not details:
+            # Some APIs put routes directly on the root data object
+            raw_routes = data.get("routes", [])
 
         current_office = origin_office
         current_holder = "N/A"
