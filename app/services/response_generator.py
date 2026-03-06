@@ -64,6 +64,11 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
         Response string to send to the user.
     """
 
+    # --- Catch-all for PDID provided but no data found (regardless of intent) ---
+    if "pdid" in entities and document is None:
+        pdid = entities["pdid"]
+        return f"I couldn't find any document with Tracking No. {pdid}. Please double-check the Tracking No. and try again."
+
     # --- Document status with data --- 
     if intent == "document_status" and document:
         return _format_document_status(document)
@@ -72,19 +77,9 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
     if intent == "document_status" and "pdid" not in entities:
         return "I can help you check your document status. What is the Tracking No. of your document?"
 
-    # --- Document status with PDID but no data found ---
-    if intent == "document_status" and "pdid" in entities and document is None:
-        pdid = entities["pdid"]
-        return f"I couldn't find any document with Tracking No. {pdid}. Please double-check the Tracking No. and try again."
-
     # --- Follow-up with document data ---
     if intent == "follow_up" and document:
         return _format_document_status(document)
-
-    # --- Follow-up with PDID but no document found ---
-    if intent == "follow_up" and "pdid" in entities and document is None:
-        pdid = entities["pdid"]
-        return f"I couldn't find any document with Tracking No. {pdid}. Please check the Tracking No. and try again."
 
     # --- Follow-up without PDID ---
     if intent == "follow_up" and "pdid" not in entities:
