@@ -33,7 +33,8 @@ class Settings(BaseSettings):
 
     # RAG (Retrieval-Augmented Generation)
     USE_RAG: bool = True
-    RAG_DOCUMENT_PATH: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ELA_2025-2028.docx")
+    # If using local file: RAG_DOCUMENT_PATH: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ELA_2025-2028.docx")
+    RAG_DOCUMENT_API_URL: str = "http://localhost:3000/api/general-documents/12"
     RAG_STORE_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "rag_store")
     RAG_TOP_K: int = 3
 

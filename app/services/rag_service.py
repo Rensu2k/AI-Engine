@@ -11,6 +11,7 @@ Handles:
 import os
 import pickle
 import logging
+import requests
 from typing import List, Optional
 import numpy as np
 
@@ -37,22 +38,33 @@ def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[st
     return chunks
 
 
-def _load_docx(path: str) -> str:
-    """Extract all paragraph text from a .docx file."""
+def _fetch_from_api(api_url: str) -> str:
+    """Fetch the extracted document text from the Admin API."""
     try:
-        from docx import Document
-    except ImportError:
-        logger.error("[RAG] python-docx is not installed.")
-        raise
+        logger.info(f"[RAG] Fetching document directly from API: {api_url}")
+        res = requests.get(api_url, timeout=15)
+        res.raise_for_status()
+        data = res.json()
         
-    doc = Document(path)
-    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-    return "\n".join(paragraphs)
+        # Check if the response follows {success: true, data: {extracted_data: {text: "..."}}}
+        if "data" in data and isinstance(data["data"], dict):
+            doc = data["data"]
+            extracted = doc.get("extracted_data", {})
+            if isinstance(extracted, dict) and "text" in extracted:
+                text = extracted["text"].strip()
+                if text:
+                    return text
+        
+        logger.warning(f"[RAG] Warning: Could not find extracted text in API response from {api_url}.")
+        return ""
+    except Exception as e:
+        logger.error(f"[RAG] Failed to fetch document from API: {e}")
+        raise
 
 
-def _build_or_load_index(doc_path: str, store_dir: str) -> None:
+def _build_or_load_index(api_url: str, store_dir: str) -> None:
     """
-    Build the vector embeddings from the docx if not already built,
+    Build the vector embeddings from the API if not already built,
     otherwise load the existing numpy arrays from the cache file.
     """
     global _chunks, _embeddings, _embedding_model
@@ -76,13 +88,13 @@ def _build_or_load_index(doc_path: str, store_dir: str) -> None:
         except Exception as e:
             logger.warning(f"[RAG] Failed to load cache: {e}. Re-indexing...")
 
-    # Otherwise, parse docx and build index
-    logger.info(f"[RAG] Indexing {doc_path} ...")
-    raw_text = _load_docx(doc_path)
+    # Otherwise, fetch document from Admin API and build index
+    logger.info(f"[RAG] Indexing from {api_url} ...")
+    raw_text = _fetch_from_api(api_url)
     _chunks = _chunk_text(raw_text, chunk_size=500, overlap=100)
     
     if not _chunks:
-        raise ValueError(f"Document {doc_path} is empty or unreadable.")
+        raise ValueError(f"Document from {api_url} is empty or unreadable.")
 
     # Encode all chunks to vectors
     _embeddings = _embedding_model.encode(_chunks, convert_to_numpy=True)
@@ -97,7 +109,7 @@ def _build_or_load_index(doc_path: str, store_dir: str) -> None:
     logger.info(f"[RAG] Ready. {len(_chunks)} chunks indexed.")
 
 
-def initialize_rag(doc_path: str, store_dir: str) -> None:
+def initialize_rag(api_url: str, store_dir: str) -> None:
     """
     Initialize the RAG index at application startup.
     Call this once from main.py lifespan so the index is ready before requests come in.
@@ -106,12 +118,12 @@ def initialize_rag(doc_path: str, store_dir: str) -> None:
 
     _store_dir = store_dir  # remember for later ingest calls
 
-    if not os.path.exists(doc_path):
-        logger.warning(f"[RAG] Document not found at '{doc_path}'. RAG disabled.")
+    if not api_url:
+        logger.warning("[RAG] No API URL provided. RAG disabled.")
         return
 
     try:
-        _build_or_load_index(doc_path, store_dir)
+        _build_or_load_index(api_url, store_dir)
         _rag_ready = True
         logger.info("[RAG] Initialization complete.")
     except Exception as e:

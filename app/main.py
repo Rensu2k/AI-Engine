@@ -46,13 +46,13 @@ async def lifespan(app: FastAPI):
 
     # Initialize RAG index
     if settings.USE_RAG:
-        print("📚 Initializing RAG knowledge base...")
+        print("📚 Initializing RAG knowledge base from Admin API...")
         rag_service.initialize_rag(
-            doc_path=settings.RAG_DOCUMENT_PATH,
+            api_url=settings.RAG_DOCUMENT_API_URL,
             store_dir=settings.RAG_STORE_DIR,
         )
         if rag_service.is_ready():
-            print("✅ RAG knowledge base ready (ELA_2025-2028.docx indexed)")
+            print("✅ RAG knowledge base ready (Synced from Admin API)")
         else:
             print("⚠️  RAG initialization failed — will answer without document context")
 
