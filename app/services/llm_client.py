@@ -95,11 +95,10 @@ async def generate_llm_response_stream(
         client = httpx.AsyncClient(timeout=35.0)
         request = client.build_request(
             "POST",
-            f"{settings.LLM_SERVICE_URL}/api/generate",
+            f"{settings.LLM_SERVICE_URL}/api/generate-stream",
             json={
                 "prompt": prompt,
                 "system_prompt": system_prompt,
-                "stream": True  # Request streaming if supported
             }
         )
         # Yield the response so the caller can stream the content

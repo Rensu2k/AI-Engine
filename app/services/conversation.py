@@ -303,21 +303,31 @@ async def stream_message(
         
         if response_stream:
             try:
-                # Iterate asynchronously over the response stream line-by-line
-                async for chunk in response_stream.aiter_lines():
-                    if chunk:
-                        try:
-                            # Ollama returns JSON lines, we need to extract the "response" key 
-                            # or just pass the text forward. 
-                            # Since the frontend only accepts {"text": "..."} we need to parse it if it's JSON from Ollama
-                            chunk_data = json.loads(chunk)
-                            text_chunk = chunk_data.get("response", chunk)
-                        except json.JSONDecodeError:
-                            text_chunk = chunk
+                # The LLM Service returns SSE events like: data: {"token": "..."}
+                async for line in response_stream.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+                    
+                    try:
+                        # Strip 'data: ' prefix
+                        json_str = line[6:]
+                        chunk_data = json.loads(json_str)
+                        
+                        if "error" in chunk_data:
+                            print(f"LLM Stream Error: {chunk_data['error']}")
+                            break
                             
-                        full_reply += text_chunk
-                        # Send text chunks as they arrive
-                        yield f"data: {json.dumps({'text': text_chunk})}\n\n"
+                        if chunk_data.get("done"):
+                            break
+                            
+                        text_chunk = chunk_data.get("token", "")
+                        if text_chunk:
+                            full_reply += text_chunk
+                            # Forward it to the Flutter client in its expected format
+                            yield f"data: {json.dumps({'text': text_chunk})}\n\n"
+                    except json.JSONDecodeError:
+                        continue
             except Exception as e:
                 print(f"Error streaming LLM response: {e}")
             finally:
