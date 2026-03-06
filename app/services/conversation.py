@@ -164,6 +164,21 @@ async def process_message(
         # Only set pending_intent if RAG also found nothing useful.
         update_session_context(db, session, "pending_intent", "document_status")
 
+    # ── Hard guard: PDID provided but not found in DTS → skip LLM entirely ──
+    # This is the absolute firewall. If we have a PDID but DTS returned no document,
+    # we NEVER let the LLM respond — it will hallucinate. Use the clean template.
+    if "pdid" in entities and not document:
+        reply = generate_response(intent, entities, document, context)
+        log_message(db, session.id, "user", message, intent, confidence, entities)
+        log_message(db, session.id, "bot", reply)
+        return {
+            "reply": reply,
+            "session_id": session.id,
+            "intent": intent,
+            "confidence": round(confidence, 4),
+            "entities": entities,
+        }
+
     # 6. Generate response — try LLM first, fall back to templates
     reply = None
     if settings.USE_LLM:
@@ -256,6 +271,15 @@ async def stream_message(
         "entities": entities,
     }
     yield f"data: {json.dumps(metadata)}\n\n"
+
+    # ── Hard guard: PDID provided but not found in DTS → skip LLM entirely ──
+    if "pdid" in entities and not document:
+        reply = generate_response(intent, entities, document, context)
+        log_message(db, session.id, "user", message, intent, confidence, entities)
+        log_message(db, session.id, "bot", reply)
+        yield f"data: {json.dumps({'text': reply})}\n\n"
+        yield f"data: [DONE]\n\n"
+        return
 
     full_reply = ""
     
