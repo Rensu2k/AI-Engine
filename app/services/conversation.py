@@ -279,8 +279,15 @@ async def stream_message(
         log_message(db, session.id, "bot", reply)
         # Yield the text data first
         yield f"data: {json.dumps({'text': reply})}\n\n"
-        # Then close the stream
-        yield f"data: [DONE]\n\n"
+        # Then close the stream with metadata
+        done_meta = json.dumps({
+            "session_id": session.id,
+            "intent": intent,
+            "confidence": round(confidence, 4),
+            "entities": entities,
+            "language": language,
+        })
+        yield f"data: [DONE]{done_meta}\n\n"
         return
 
     full_reply = ""
@@ -320,11 +327,25 @@ async def stream_message(
     # If no LLM streaming occurred/succeeded, fallback to template
     if not full_reply:
         full_reply = generate_response(intent, entities, document, context)
+        done_meta = json.dumps({
+            "session_id": session.id,
+            "intent": intent,
+            "confidence": round(confidence, 4),
+            "entities": entities,
+            "language": language,
+        })
         # Yield the full template response at once, guaranteeing [DONE] is trailing
-        yield f"data: {json.dumps({'text': full_reply})}\n\ndata: [DONE]\n\n"
+        yield f"data: {json.dumps({'text': full_reply})}\n\ndata: [DONE]{done_meta}\n\n"
     else:
+        done_meta = json.dumps({
+            "session_id": session.id,
+            "intent": intent,
+            "confidence": round(confidence, 4),
+            "entities": entities,
+            "language": language,
+        })
         # Send completion event for LLM streams
-        yield f"data: [DONE]\n\n"
+        yield f"data: [DONE]{done_meta}\n\n"
     
     # Log the complete interaction
     log_message(db, session.id, "user", message, intent, confidence, entities)
