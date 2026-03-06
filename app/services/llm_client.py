@@ -117,6 +117,13 @@ def _build_prompt(
     user_message: str = "",
 ) -> Optional[str]:
     """Build the prompt string sent to the LLM."""
+    
+    # HARD OVERRIDE: If we successfully fetched a document from a valid PDID,
+    # NEVER ask the LLM to format it or ramble about it. ALWAYS bypass to the 
+    # structured template renderer which builds the nice UI card.
+    if document:
+        return None
+
     if intent in ("document_status", "follow_up"):
         if not document and "pdid" in entities:
             # Return None so conversation.py falls back to the clean "not found" template.

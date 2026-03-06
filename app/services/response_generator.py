@@ -61,8 +61,12 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
         context: Session context for multi-turn awareness
 
     Returns:
-        Response string to send to the user.
     """
+    
+    # HARD OVERRIDE: If we successfully fetched a document, ALWAYS format it 
+    # and return the card, regardless of what the intent classifier guessed.
+    if document:
+        return _format_document_status(document)
 
     # --- Catch-all for PDID provided but no data found (regardless of intent) ---
     if "pdid" in entities and document is None:
