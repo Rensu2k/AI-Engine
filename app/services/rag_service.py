@@ -149,7 +149,7 @@ def add_document_to_index(text: str, filename: str = "unknown") -> int:
 
     _chunks.extend(new_chunks)
     if _embeddings is None:
-        _embeddings = new_embeddings
+        _embeddings = new_embeddings    
     else:
         _embeddings = np.vstack([_embeddings, new_embeddings])
 

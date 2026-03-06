@@ -61,8 +61,11 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
         # --- Parse routes to find current location ---
         routes = []
-        details = data.get("details", {})
-        raw_routes = details.get("routes", []) if details else []
+        details = data.get("details")
+        if isinstance(details, dict):
+            raw_routes = details.get("routes", []) if details else []
+        else:
+            raw_routes = []
 
         current_office = origin_office
         current_holder = "N/A"
@@ -143,7 +146,8 @@ def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "route_summary": route_summary,
         }
 
-    except (KeyError, TypeError, IndexError):
+    except Exception as e:
+        logger.error(f"Error parsing DTS document JSON: {e}")
         return None
 
 
