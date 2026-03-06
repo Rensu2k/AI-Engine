@@ -115,14 +115,11 @@ def _build_prompt(
             )
 
         if document:
-            doc_info = _format_document_status(document)
-            return (
-                f"The user is asking for the status of their document.\n\n"
-                f"Here is the raw tracking data from the database:\n{doc_info}\n\n"
-                f"Please provide a natural, conversational response telling the user "
-                f"the status of their document. You can include the bulleted information "
-                f"if it's helpful, but frame it naturally."
-            )
+            # We must return None here so that conversation.py bypasses the LLM
+            # and falls back to the structured template. The Flutter frontend 
+            # uses regex to parse the exact "**Route History:**" string from the template.
+            # If the LLM rewrites it, the UI breaks.
+            return None
 
         # If intent is document_status but no PDID/document, the template handles
         # asking for PDID best, so return None to fall back to template.
