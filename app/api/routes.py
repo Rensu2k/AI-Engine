@@ -39,6 +39,7 @@ async def chat(request: Request, chat_request: ChatRequest, db: DBSession = Depe
             message=chat_request.message,
             session_id=chat_request.session_id,
             language=chat_request.language,
+            topic=chat_request.topic,
         )
         return ChatResponse(**result)
     except Exception as e:
@@ -63,6 +64,7 @@ async def chat_stream(request: Request, chat_request: ChatRequest, db: DBSession
                 message=chat_request.message,
                 session_id=chat_request.session_id,
                 language=chat_request.language,
+                topic=chat_request.topic,
             ),
             media_type="text/event-stream"
         )

@@ -9,6 +9,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000, description="The user's message")
     session_id: Optional[str] = Field(None, description="Session ID for multi-turn conversation. Omit to start a new session.")
     language: str = Field(default="en", description="Language preference (e.g. 'en', 'tl')")
+    topic: Optional[str] = Field(None, description="User's selected topic: 'docs' (Document Tracking) or 'lgu' (LGU Services). Enforces strict intent routing.")
 
     model_config = {
         "json_schema_extra": {

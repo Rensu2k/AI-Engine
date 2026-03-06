@@ -63,6 +63,7 @@ async def process_message(
     message: str,
     session_id: Optional[str] = None,
     language: str = "en",
+    topic: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Process a user message through the full AI pipeline.
@@ -81,6 +82,7 @@ async def process_message(
         message: Raw user message
         session_id: Optional session ID for multi-turn context
         language: Language hint (kept for API compatibility)
+        topic: User-selected topic ('docs' or 'lgu'). Enforces strict intent routing.
 
     Returns:
         Dict with reply, session_id, intent, confidence, entities
@@ -93,6 +95,18 @@ async def process_message(
 
     # 3. Extract entities
     entities = extract_entities(message)
+
+    # ── Strict topic enforcement — override intent to match selected mode ──
+    # docs mode: only allow document tracking intents
+    # lgu mode: only allow knowledge/RAG intents, never ask for PDID
+    if topic == "docs":
+        # If classifier said lgu_query, tourism_query, or unknown, keep it as document_status
+        if intent in ("lgu_query", "tourism_query", "unknown"):
+            intent = "document_status"
+    elif topic == "lgu":
+        # If classifier said document_status or follow_up (without PDID), force to lgu_query
+        if intent in ("document_status", "follow_up") and "pdid" not in entities:
+            intent = "lgu_query"
 
     # 4. Multi-turn context: check if we're waiting for a PDID
     context = dict(session.context) if session.context else {}
@@ -140,6 +154,12 @@ async def process_message(
     # instead of being mistakenly treated as a PDID reply.
     if rag_context:
         update_session_context(db, session, "pending_intent", None)
+        # CRITICAL: Reclassify intent to lgu_query when RAG found results but no PDID.
+        # The LLM's follow_up/document_status trained personality ignores RAG context
+        # and reverts to asking for a Tracking Number. lgu_query is the intent that
+        # correctly instructs the LLM to answer from document excerpts.
+        if intent in ("follow_up", "document_status") and "pdid" not in entities and not document:
+            intent = "lgu_query"
     elif intent == "document_status" and "pdid" not in entities and not document:
         # Only set pending_intent if RAG also found nothing useful.
         update_session_context(db, session, "pending_intent", "document_status")
@@ -175,6 +195,7 @@ async def stream_message(
     message: str,
     session_id: Optional[str] = None,
     language: str = "en",
+    topic: Optional[str] = None,
 ):
     """
     Process a user message and yield Server-Sent Events (SSE).
@@ -183,6 +204,14 @@ async def stream_message(
     session = get_or_create_session(db, session_id)
     intent, confidence = classifier.predict(message)
     entities = extract_entities(message)
+
+    # ── Strict topic enforcement ──
+    if topic == "docs":
+        if intent in ("lgu_query", "tourism_query", "unknown"):
+            intent = "document_status"
+    elif topic == "lgu":
+        if intent in ("document_status", "follow_up") and "pdid" not in entities:
+            intent = "lgu_query"
 
     context = dict(session.context) if session.context else {}
     pending_intent = context.get("pending_intent")
@@ -197,6 +226,7 @@ async def stream_message(
     if "pdid" in entities:
         update_session_context(db, session, "last_pdid", entities["pdid"])
 
+
     document = None
     if "pdid" in entities:
         document = await get_document(entities["pdid"])
@@ -210,6 +240,11 @@ async def stream_message(
     # (like "HOW ABOUT [name]?") also search RAG instead of being treated as PDID replies.
     if rag_context:
         update_session_context(db, session, "pending_intent", None)
+        # CRITICAL: Reclassify intent to lgu_query when RAG found results but no PDID.
+        # Ollama's follow_up/document_status trained personality ignores RAG context
+        # and reverts to the tracking greeting. lgu_query correctly uses the RAG excerpts.
+        if intent in ("follow_up", "document_status") and "pdid" not in entities and not document:
+            intent = "lgu_query"
     elif intent == "document_status" and "pdid" not in entities and not document:
         update_session_context(db, session, "pending_intent", "document_status")
 
