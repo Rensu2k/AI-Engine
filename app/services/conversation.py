@@ -104,9 +104,9 @@ async def process_message(
         # Clear the pending state
         update_session_context(db, session, "pending_intent", None)
 
-    # If intent is document_status but no PDID, remember we're asking for one
-    if intent == "document_status" and "pdid" not in entities:
-        update_session_context(db, session, "pending_intent", "document_status")
+    # If intent is document_status but no PDID, only remember we need one if the user
+    # clearly hasn't given us any document name or keywords (pure PDID tracking request).
+    # We will OVERRIDE this below if RAG retrieves a valid result instead.
 
     # Also check if there's a PDID in context from a previous message
     if "pdid" not in entities and context.get("last_pdid"):
@@ -134,6 +134,15 @@ async def process_message(
                 query=message,
                 top_k=settings.RAG_TOP_K,
             )
+
+    # If RAG found results, we are in knowledge-base mode — clear any pending tracking state.
+    # This allows follow-up messages like "HOW ABOUT [name]?" to also search RAG
+    # instead of being mistakenly treated as a PDID reply.
+    if rag_context:
+        update_session_context(db, session, "pending_intent", None)
+    elif intent == "document_status" and "pdid" not in entities and not document:
+        # Only set pending_intent if RAG also found nothing useful.
+        update_session_context(db, session, "pending_intent", "document_status")
 
     # 6. Generate response — try LLM first, fall back to templates
     reply = None
@@ -181,8 +190,7 @@ async def stream_message(
     if "pdid" in entities and pending_intent == "document_status":
         intent = "follow_up"
         update_session_context(db, session, "pending_intent", None)
-    if intent == "document_status" and "pdid" not in entities:
-        update_session_context(db, session, "pending_intent", "document_status")
+    # NOTE: pending_intent for document_status is set BELOW, only when RAG finds nothing.
     if "pdid" not in entities and context.get("last_pdid"):
         if intent in ("document_status", "follow_up"):
             entities["pdid"] = context["last_pdid"]
@@ -197,6 +205,13 @@ async def stream_message(
     if settings.USE_RAG and rag_service.is_ready() and not document:
         if intent in ("lgu_query", "tourism_query", "unknown", "document_status", "follow_up"):
             rag_context = rag_service.retrieve_context(query=message, top_k=settings.RAG_TOP_K)
+
+    # If RAG found results, clear pending tracking state so follow-up messages
+    # (like "HOW ABOUT [name]?") also search RAG instead of being treated as PDID replies.
+    if rag_context:
+        update_session_context(db, session, "pending_intent", None)
+    elif intent == "document_status" and "pdid" not in entities and not document:
+        update_session_context(db, session, "pending_intent", "document_status")
 
     # First yield the metadata (intent, entities, sessionid)
     metadata = {
