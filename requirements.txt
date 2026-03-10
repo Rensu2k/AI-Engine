@@ -13,6 +13,9 @@ langdetect
 deep-translator
 slowapi
 cachetools
+# TTS
+edge-tts
 # RAG dependencies
 python-docx
 sentence-transformers
+numpy
