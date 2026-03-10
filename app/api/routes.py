@@ -172,6 +172,11 @@ def _strip_markdown(text: str) -> str:
     )
     # Expand common abbreviations for natural TTS reading
     text = re.sub(r'\bNo\.(?=\s|$)', 'Number', text)
+    # Convert single-letter initials like "L." to just "L" so TTS reads the letter naturally
+    text = re.sub(r'\b([A-Z])\.\s', r'\1 ', text)
+    # Convert ALL-CAPS WORDS to Title Case so TTS reads them as full words, not individual letters
+    # (e.g., "MAYOR" → "Mayor", "DUMLAO" → "Dumlao")
+    text = re.sub(r'\b([A-Z]{2,})\b', lambda m: m.group(1).title(), text)
     # Remove bullet points
     text = text.replace("• ", "")
     # Ignore slash signs when reading

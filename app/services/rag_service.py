@@ -237,6 +237,10 @@ def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
     if not _rag_ready or _embeddings is None or _embedding_model is None:
         return None
 
+    # Guard: if all documents have been deleted, the index is empty — skip retrieval
+    if len(_chunks) == 0 or _embeddings.shape[0] == 0:
+        return None
+
     try:
         from sklearn.metrics.pairwise import cosine_similarity
 
