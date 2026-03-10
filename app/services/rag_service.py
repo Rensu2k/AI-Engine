@@ -33,27 +33,48 @@ def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[st
     return chunks
 
 
-def _fetch_from_api(api_url: str) -> str:
-    """Fetch the extracted document text from the Admin API."""
+def _fetch_all_from_api(list_api_url: str) -> list:
+    """
+    Fetch extracted text from ALL general documents via the Admin API list endpoint.
+    Returns a list of (original_name, text) tuples.
+    """
     try:
-        logger.info(f"[RAG] Fetching document directly from API: {api_url}")
-        res = requests.get(api_url, timeout=15)
+        logger.info(f"[RAG] Fetching document list from: {list_api_url}")
+        res = requests.get(list_api_url, timeout=15)
         res.raise_for_status()
         data = res.json()
-        
-        # Check if the response follows {success: true, data: {extracted_data: {text: "..."}}}
-        if "data" in data and isinstance(data["data"], dict):
-            doc = data["data"]
-            extracted = doc.get("extracted_data", {})
-            if isinstance(extracted, dict) and "text" in extracted:
-                text = extracted["text"].strip()
-                if text:
-                    return text
-        
-        logger.warning(f"[RAG] Warning: Could not find extracted text in API response from {api_url}.")
-        return ""
+
+        if not data.get("success") or not isinstance(data.get("data"), list):
+            logger.warning("[RAG] List API returned no documents.")
+            return []
+
+        docs = []
+        for item in data["data"]:
+            doc_id = item.get("id")
+            original_name = item.get("original_name", f"document_{doc_id}")
+            # Fetch full doc with extracted_data
+            detail_url = f"{list_api_url}/{doc_id}"
+            try:
+                detail_res = requests.get(detail_url, timeout=15)
+                detail_res.raise_for_status()
+                detail = detail_res.json()
+                if detail.get("success") and isinstance(detail.get("data"), dict):
+                    extracted = detail["data"].get("extracted_data", {})
+                    if isinstance(extracted, str):
+                        import json as _json
+                        try:
+                            extracted = _json.loads(extracted)
+                        except Exception:
+                            extracted = {}
+                    text = extracted.get("text", "").strip() if isinstance(extracted, dict) else ""
+                    if text:
+                        docs.append((original_name, text))
+                        logger.info(f"[RAG] Loaded document: {original_name} ({len(text)} chars)")
+            except Exception as e:
+                logger.warning(f"[RAG] Failed to fetch document {doc_id}: {e}")
+        return docs
     except Exception as e:
-        logger.error(f"[RAG] Failed to fetch document from API: {e}")
+        logger.error(f"[RAG] Failed to fetch document list: {e}")
         raise
 
 
@@ -85,17 +106,25 @@ def _build_or_load_index(api_url: str, store_dir: str) -> None:
         except Exception as e:
             logger.warning(f"[RAG] Failed to load cache: {e}. Re-indexing...")
 
-    # Otherwise, fetch document from Admin API and build index
-    logger.info(f"[RAG] Indexing from {api_url} ...")
-    raw_text = _fetch_from_api(api_url)
-    _chunks = _chunk_text(raw_text, chunk_size=500, overlap=100)
-    
-    if not _chunks:
-        raise ValueError(f"Document from {api_url} is empty or unreadable.")
+    # Otherwise, fetch documents from Admin API and build index
+    logger.info(f"[RAG] Indexing all documents from {api_url} ...")
+    doc_list = _fetch_all_from_api(api_url)
+
+    if not doc_list:
+        raise ValueError(f"No documents returned from {api_url}. Upload a document first.")
+
+    all_chunks = []
+    all_filenames = []
+    for original_name, text in doc_list:
+        doc_chunks = _chunk_text(text, chunk_size=500, overlap=100)
+        all_chunks.extend(doc_chunks)
+        all_filenames.extend([original_name] * len(doc_chunks))
+
+    _chunks = all_chunks
+    _chunk_filenames = all_filenames
 
     # Encode all chunks to vectors
     _embeddings = _embedding_model.encode(_chunks, convert_to_numpy=True)
-    _chunk_filenames = ["master_document"] * len(_chunks)
 
     # Save to cache
     with open(cache_path, "wb") as f:
@@ -105,7 +134,7 @@ def _build_or_load_index(api_url: str, store_dir: str) -> None:
             "filenames": _chunk_filenames
         }, f)
 
-    logger.info(f"[RAG] Ready. {len(_chunks)} chunks indexed.")
+    logger.info(f"[RAG] Ready. {len(_chunks)} chunks indexed from {len(doc_list)} documents.")
 
 
 def initialize_rag(api_url: str, store_dir: str) -> None:
