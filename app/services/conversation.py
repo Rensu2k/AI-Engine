@@ -167,7 +167,7 @@ async def process_message(
     # This is the absolute firewall. If we have a PDID but DTS returned no document,
     # we NEVER let the LLM respond — it will hallucinate. Use the clean template.
     if "pdid" in entities and not document:
-        reply = generate_response(intent, entities, document, context)
+        reply = generate_response(intent, entities, document, context, topic=topic)
         log_message(db, session.id, "user", message, intent, confidence, entities)
         log_message(db, session.id, "bot", reply)
         return {
@@ -188,7 +188,7 @@ async def process_message(
 
     if not reply:
         # Fallback to template generator
-        reply = generate_response(intent, entities, document, context)
+        reply = generate_response(intent, entities, document, context, topic=topic)
 
     # 7. Log messages
     log_message(db, session.id, "user", message, intent, confidence, entities)
@@ -272,7 +272,7 @@ async def stream_message(
 
     # ── Hard guard: PDID provided but not found in DTS → skip LLM entirely ──
     if "pdid" in entities and not document:
-        reply = generate_response(intent, entities, document, context)
+        reply = generate_response(intent, entities, document, context, topic=topic)
         log_message(db, session.id, "user", message, intent, confidence, entities)
         log_message(db, session.id, "bot", reply)
         # Yield the text data first
@@ -334,7 +334,7 @@ async def stream_message(
                 
     # If no LLM streaming occurred/succeeded, fallback to template
     if not full_reply:
-        full_reply = generate_response(intent, entities, document, context)
+        full_reply = generate_response(intent, entities, document, context, topic=topic)
         done_meta = json.dumps({
             "session_id": session.id,
             "intent": intent,

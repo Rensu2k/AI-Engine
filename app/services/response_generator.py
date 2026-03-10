@@ -50,7 +50,7 @@ _TOURISM_RESPONSES = [
 ]
 
 
-def generate_response(intent: str, entities: Dict[str, str], document: Optional[Dict[str, Any]] = None, context: dict = None) -> str:
+def generate_response(intent: str, entities: Dict[str, str], document: Optional[Dict[str, Any]] = None, context: dict = None, topic: Optional[str] = None) -> str:
     """
     Generate a human-friendly response based on intent, entities, and document data.
 
@@ -126,6 +126,13 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
         return random.choice(_TOURISM_RESPONSES)
 
     # --- Unknown / fallback ---
+    if topic == 'lgu':
+        return (
+            "I'm sorry, I didn't quite understand that. I can help you with "
+            "**Surigao City LGU Services** — such as permits, ordinances, offices, or general inquiries. "
+            "Try asking something like \"What are the requirements for a business permit?\" or \""
+            "Where is the City Hall located?\""
+        )
     return (
         "I'm sorry, I didn't understand that. I'm a Document Tracking Assistant — "
         "I can help you check the status of your documents. "
