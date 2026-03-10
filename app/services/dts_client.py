@@ -6,14 +6,13 @@ Parses the real DTS API response format into a flat, AI-friendly structure.
 """
 
 import json
+import logging
 import os
 import httpx
 from typing import Optional, Dict, Any, List
-from cachetools import TTLCache
 from app.config import settings
 
-# Cache document lookups for 60 seconds (avoids repeated API calls for the same PDID)
-_document_cache: TTLCache = TTLCache(maxsize=256, ttl=60)
+logger = logging.getLogger(__name__)
 
 
 def parse_dts_document(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -275,7 +274,6 @@ async def get_document(pdid: str) -> Optional[Dict[str, Any]]:
 
     In mock mode: returns from built-in sample data.
     In live mode: calls DTS backend API and parses the response.
-    Results are cached for 60 seconds to reduce redundant API calls.
 
     Args:
         pdid: The document PDID (e.g., "001", "1000")
@@ -291,10 +289,6 @@ async def get_document(pdid: str) -> Optional[Dict[str, Any]]:
         # Try both the zero-padded key and the raw number
         return MOCK_DOCUMENTS.get(pdid_key) or MOCK_DOCUMENTS.get(pdid_clean)
 
-    # Check cache first
-    if pdid_key in _document_cache:
-        return _document_cache[pdid_key]
-
     # Live mode: call DTS backend
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -304,10 +298,8 @@ async def get_document(pdid: str) -> Optional[Dict[str, Any]]:
             if response.status_code == 200:
                 raw = response.json()
                 parsed = parse_dts_document(raw)
-                _document_cache[pdid_key] = parsed  # cache the result
                 return parsed
             elif response.status_code == 404:
-                _document_cache[pdid_key] = None  # cache the miss too
                 return None
             else:
                 response.raise_for_status()

@@ -9,6 +9,25 @@ from app.services.response_generator import _format_document_status
 
 logger = logging.getLogger(__name__)
 
+# Shared client for streaming requests (reused to avoid connection leaks)
+_stream_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_stream_client() -> httpx.AsyncClient:
+    """Get or create the shared streaming client."""
+    global _stream_client
+    if _stream_client is None:
+        _stream_client = httpx.AsyncClient(timeout=35.0)
+    return _stream_client
+
+
+async def close_stream_client() -> None:
+    """Close the shared streaming client. Call on app shutdown."""
+    global _stream_client
+    if _stream_client is not None:
+        await _stream_client.aclose()
+        _stream_client = None
+
 
 async def generate_llm_response(
     intent: str,
@@ -91,8 +110,7 @@ async def generate_llm_response_stream(
         )
 
     try:
-        # We don't use 'async with httpx.AsyncClient()' here because we need to yield from the stream
-        client = httpx.AsyncClient(timeout=35.0)
+        client = _get_stream_client()
         request = client.build_request(
             "POST",
             f"{settings.LLM_SERVICE_URL}/api/generate-stream",
@@ -101,7 +119,6 @@ async def generate_llm_response_stream(
                 "system_prompt": system_prompt,
             }
         )
-        # Yield the response so the caller can stream the content
         return await client.send(request, stream=True)
     except Exception as e:
         logger.error(f"Error calling LLM Service Stream: {e}")

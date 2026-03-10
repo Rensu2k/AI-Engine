@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import io
@@ -15,6 +16,7 @@ from app.schemas.chat import (
     HealthResponse,
     TTSRequest,
     RagIngestRequest, RagIngestResponse,
+    RagDeleteRequest, RagDeleteResponse
 )
 from app.services import rag_service
 from app.services.conversation import process_message, classifier
@@ -47,6 +49,22 @@ async def chat(request: Request, chat_request: ChatRequest, db: DBSession = Depe
 
 from app.services.conversation import stream_message
 
+
+async def _stream_with_error_handling(db, message, session_id, language, topic):
+    """Wrap stream_message to catch and surface streaming errors as SSE events."""
+    try:
+        async for chunk in stream_message(
+            db=db,
+            message=message,
+            session_id=session_id,
+            language=language,
+            topic=topic,
+        ):
+            yield chunk
+    except Exception as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+
 @router.post("/chat/stream")
 @limiter.limit("30/minute")
 async def chat_stream(request: Request, chat_request: ChatRequest, db: DBSession = Depends(get_db)):
@@ -54,12 +72,11 @@ async def chat_stream(request: Request, chat_request: ChatRequest, db: DBSession
     Streaming chat endpoint using Server-Sent Events (SSE).
 
     Yields chunks of the AI's response as they are generated.
+    Errors during streaming are yielded as SSE events with an "error" field.
     """
     try:
-        # FastAPI's StreamingResponse lets us yield an async generator.
-        # media_type="text/event-stream" tells the client to expect SSE.
         return StreamingResponse(
-            stream_message(
+            _stream_with_error_handling(
                 db=db,
                 message=chat_request.message,
                 session_id=chat_request.session_id,
@@ -157,6 +174,8 @@ def _strip_markdown(text: str) -> str:
     text = re.sub(r'\bNo\.(?=\s|$)', 'Number', text)
     # Remove bullet points
     text = text.replace("• ", "")
+    # Ignore slash signs when reading
+    text = text.replace("/", " ")
     # Convert newlines to natural pauses
     text = re.sub(r'\n+', '. ', text)
     # Clean up extra whitespace
@@ -189,15 +208,16 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
     # Validate or auto-detect voice
     voice = tts_request.voice
     
-    # Auto-detect language if the user didn't explicitly request the Filipino voice
-    if voice != "fil-PH-AngeloNeural":
-        try:
-            # langdetect returns 'tl' for Tagalog/Filipino
-            detected_lang = detect(clean_text)
-            if detected_lang == 'tl':
-                voice = "fil-PH-AngeloNeural"
-        except Exception:
-            pass # fallback to requested voice if detection fails
+    # Auto-detect language to ensure the correct voice is used
+    # (Since the frontend might always send a specific voice regardless of the language)
+    try:
+        detected_lang = detect(clean_text)
+        if detected_lang == 'en':
+            voice = "en-US-GuyNeural"
+        elif detected_lang == 'tl':
+            voice = "fil-PH-AngeloNeural"
+    except Exception:
+        pass # fallback to requested voice if detection fails
 
     if voice not in ALLOWED_VOICES:
         raise HTTPException(
@@ -249,3 +269,25 @@ async def rag_ingest(payload: RagIngestRequest):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+
+
+@router.post("/rag/delete", response_model=RagDeleteResponse)
+async def rag_delete(payload: RagDeleteRequest):
+    """
+    Remove a document's extracted text from the live RAG index.
+
+    Called by the Admin Dashboard immediately after a document is deleted.
+    The chunks and embeddings associated with the filename are removed from
+    in-memory arrays. The updated index is then persisted to disk.
+    """
+    try:
+        chunks_deleted = rag_service.delete_document_from_index(
+            filename=payload.filename,
+        )
+        return RagDeleteResponse(
+            success=True,
+            message=f"Successfully deleted '{payload.filename}' from index.",
+            chunks_deleted=chunks_deleted,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Deletion failed: {str(e)}")

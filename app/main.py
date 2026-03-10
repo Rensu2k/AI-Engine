@@ -11,6 +11,7 @@ from app.db.database import engine
 from app.db.models import Base
 from app.services.conversation import classifier
 from app.services import rag_service
+from app.services.llm_client import close_stream_client
 from app.rate_limiter import limiter
 
 
@@ -54,6 +55,7 @@ async def lifespan(app: FastAPI):
 
     # --- Shutdown ---
     print("👋 Shutting down DTS AI Engine...")
+    await close_stream_client()
 
 
 app = FastAPI(

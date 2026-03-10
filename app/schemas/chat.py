@@ -82,3 +82,15 @@ class RagIngestResponse(BaseModel):
     success: bool
     message: str
     chunks_added: int
+
+
+class RagDeleteRequest(BaseModel):
+    """Request body for POST /api/rag/delete."""
+    filename: str = Field(..., description="Original filename of the document to delete")
+
+
+class RagDeleteResponse(BaseModel):
+    """Response body for POST /api/rag/delete."""
+    success: bool
+    message: str
+    chunks_deleted: int

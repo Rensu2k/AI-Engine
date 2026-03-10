@@ -10,6 +10,7 @@ Supports:
 
 import os
 import csv
+import threading
 import numpy as np
 from typing import Tuple, List, Optional
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -29,6 +30,7 @@ class IntentClassifier:
         self.pipeline: Optional[Pipeline] = None
         self.model_path = os.path.join(settings.MODEL_DIR, "intent_model.joblib")
         self.is_loaded = False
+        self._lock = threading.Lock()
 
     def train(self, csv_path: str = None, data: List[Tuple[str, str]] = None) -> dict:
         """
@@ -47,11 +49,22 @@ class IntentClassifier:
         if csv_path:
             with open(csv_path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                for row in reader:
-                    processed = preprocess_text(row["text"])
-                    if processed:
-                        texts.append(processed)
-                        intents.append(row["intent"].strip())
+                required = {"text", "intent"}
+                fieldnames = reader.fieldnames or []
+                if required.issubset(fieldnames):
+                    for row in reader:
+                        text = row.get("text")
+                        intent = row.get("intent")
+                        if text is None or intent is None:
+                            continue
+                        processed = preprocess_text(text)
+                        if processed:
+                            texts.append(processed)
+                            intents.append(str(intent).strip())
+                else:
+                    raise ValueError(
+                        f"CSV must have columns 'text' and 'intent'. Found: {fieldnames}"
+                    )
 
         if data:
             for text, intent in data:
@@ -72,7 +85,7 @@ class IntentClassifier:
             class_weight="balanced",
         )
 
-        self.pipeline = Pipeline([
+        new_pipeline = Pipeline([
             ("tfidf", TfidfVectorizer(
                 ngram_range=(1, 2),
                 max_features=5000,
@@ -81,16 +94,20 @@ class IntentClassifier:
             ("clf", base_clf),
         ])
 
-        self.pipeline.fit(texts, intents)
-        self.is_loaded = True
+        new_pipeline.fit(texts, intents)
 
         # Calculate training accuracy
-        predictions = self.pipeline.predict(texts)
+        predictions = new_pipeline.predict(texts)
         accuracy = np.mean([p == t for p, t in zip(predictions, intents)])
 
         # Save model
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        joblib.dump(self.pipeline, self.model_path)
+        joblib.dump(new_pipeline, self.model_path)
+
+        # Atomically swap the pipeline (prevents race with predict)
+        with self._lock:
+            self.pipeline = new_pipeline
+            self.is_loaded = True
 
         unique_intents = list(set(intents))
 
@@ -104,8 +121,10 @@ class IntentClassifier:
     def load(self) -> bool:
         """Load a previously trained model. Returns True if successful."""
         if os.path.exists(self.model_path):
-            self.pipeline = joblib.load(self.model_path)
-            self.is_loaded = True
+            loaded = joblib.load(self.model_path)
+            with self._lock:
+                self.pipeline = loaded
+                self.is_loaded = True
             return True
         return False
 
@@ -120,16 +139,18 @@ class IntentClassifier:
             Tuple of (intent_label, confidence_score)
             Returns ("unknown", 0.0) if model is not loaded or confidence is too low
         """
-        if not self.is_loaded or self.pipeline is None:
-            return ("unknown", 0.0)
+        with self._lock:
+            if not self.is_loaded or self.pipeline is None:
+                return ("unknown", 0.0)
+            pipeline = self.pipeline
 
         processed = preprocess_text(text)
         if not processed:
             return ("unknown", 0.0)
 
         # Get prediction with probabilities
-        intent = self.pipeline.predict([processed])[0]
-        probabilities = self.pipeline.predict_proba([processed])[0]
+        intent = pipeline.predict([processed])[0]
+        probabilities = pipeline.predict_proba([processed])[0]
         confidence = float(max(probabilities))
 
         # If confidence is below threshold, return unknown
@@ -141,6 +162,7 @@ class IntentClassifier:
     @property
     def classes(self) -> list:
         """Return the list of known intent classes."""
-        if self.pipeline is not None:
-            return list(self.pipeline.classes_)
+        with self._lock:
+            if self.pipeline is not None:
+                return list(self.pipeline.classes_)
         return []

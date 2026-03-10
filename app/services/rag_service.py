@@ -1,15 +1,20 @@
 import os
 import pickle
 import logging
+import threading
 import requests
 from typing import List, Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Lock to prevent race conditions when concurrent requests read/write _chunks and _embeddings
+_rag_lock = threading.Lock()
+
 # Lazy-loaded globals — initialized on first use
 _rag_ready: bool = False
 _chunks: List[str] = []
+_chunk_filenames: List[str] = []
 _embeddings = None
 _embedding_model = None
 _store_dir: str = ""   # set during initialize_rag; used by add_document_to_index
@@ -57,7 +62,7 @@ def _build_or_load_index(api_url: str, store_dir: str) -> None:
     Build the vector embeddings from the API if not already built,
     otherwise load the existing numpy arrays from the cache file.
     """
-    global _chunks, _embeddings, _embedding_model
+    global _chunks, _chunk_filenames, _embeddings, _embedding_model
     from sentence_transformers import SentenceTransformer
 
     os.makedirs(store_dir, exist_ok=True)
@@ -73,7 +78,9 @@ def _build_or_load_index(api_url: str, store_dir: str) -> None:
                 data = pickle.load(f)
                 _chunks = data["chunks"]
                 _embeddings = data["embeddings"]
-            logger.info("[RAG] Loaded existing index from disk cache.")
+                # Backwards compatible: if old cache without filenames, fill with 'unknown'
+                _chunk_filenames = data.get("filenames", ["unknown"] * len(_chunks))
+            logger.info(f"[RAG] Loaded existing index from disk cache. ({len(_chunks)} chunks)")
             return
         except Exception as e:
             logger.warning(f"[RAG] Failed to load cache: {e}. Re-indexing...")
@@ -88,12 +95,14 @@ def _build_or_load_index(api_url: str, store_dir: str) -> None:
 
     # Encode all chunks to vectors
     _embeddings = _embedding_model.encode(_chunks, convert_to_numpy=True)
+    _chunk_filenames = ["master_document"] * len(_chunks)
 
     # Save to cache
     with open(cache_path, "wb") as f:
         pickle.dump({
             "chunks": _chunks,
-            "embeddings": _embeddings
+            "embeddings": _embeddings,
+            "filenames": _chunk_filenames
         }, f)
 
     logger.info(f"[RAG] Ready. {len(_chunks)} chunks indexed.")
@@ -147,22 +156,69 @@ def add_document_to_index(text: str, filename: str = "unknown") -> int:
 
     new_embeddings = _embedding_model.encode(new_chunks, convert_to_numpy=True)
 
-    _chunks.extend(new_chunks)
-    if _embeddings is None:
-        _embeddings = new_embeddings    
-    else:
-        _embeddings = np.vstack([_embeddings, new_embeddings])
+    with _rag_lock:
+        _chunks.extend(new_chunks)
+        _chunk_filenames.extend([filename] * len(new_chunks))
+        if _embeddings is None:
+            _embeddings = new_embeddings
+        else:
+            _embeddings = np.vstack([_embeddings, new_embeddings])
+        _rag_ready = True
+        chunks_to_persist = list(_chunks)
+        filenames_to_persist = list(_chunk_filenames)
+        embeddings_to_persist = _embeddings
 
-    _rag_ready = True
-
-    # Persist the updated index
+    # Persist the updated index (outside lock to avoid holding during I/O)
     cache_path = os.path.join(_store_dir, "rag_cache.pkl")
     os.makedirs(_store_dir, exist_ok=True)
     with open(cache_path, "wb") as f:
-        pickle.dump({"chunks": _chunks, "embeddings": _embeddings}, f)
+        pickle.dump({"chunks": chunks_to_persist, "embeddings": embeddings_to_persist, "filenames": filenames_to_persist}, f)
 
     logger.info(f"[RAG] Added {len(new_chunks)} chunks from '{filename}' to index and saved cache.")
     return len(new_chunks)
+
+
+def delete_document_from_index(filename: str) -> int:
+    """
+    Remove all chunks and embeddings associated with a specific document filename.
+    
+    Returns:
+        Number of chunks deleted.
+    """
+    global _chunks, _chunk_filenames, _embeddings, _rag_ready
+
+    if not _rag_ready or not _chunks:
+        return 0
+
+    with _rag_lock:
+        # Find indices of chunks that belong to this filename
+        indices_to_delete = [i for i, fn in enumerate(_chunk_filenames) if fn == filename]
+        
+        if not indices_to_delete:
+            return 0
+            
+        # Delete from lists (reverse order to maintain correct indices during deletion)
+        for i in sorted(indices_to_delete, reverse=True):
+            del _chunks[i]
+            del _chunk_filenames[i]
+            
+        # Delete from numpy array
+        if _embeddings is not None:
+            _embeddings = np.delete(_embeddings, indices_to_delete, axis=0)
+            
+        chunks_to_persist = list(_chunks)
+        filenames_to_persist = list(_chunk_filenames)
+        embeddings_to_persist = _embeddings
+
+    # Persist the updated index
+    if _store_dir:
+        cache_path = os.path.join(_store_dir, "rag_cache.pkl")
+        if os.path.exists(cache_path):
+            with open(cache_path, "wb") as f:
+                pickle.dump({"chunks": chunks_to_persist, "embeddings": embeddings_to_persist, "filenames": filenames_to_persist}, f)
+
+    logger.info(f"[RAG] Deleted {len(indices_to_delete)} chunks for '{filename}' and updated cache.")
+    return len(indices_to_delete)
 
 
 def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
@@ -183,13 +239,17 @@ def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
 
     try:
         from sklearn.metrics.pairwise import cosine_similarity
-        
+
+        with _rag_lock:
+            chunks_snapshot = list(_chunks)
+            embeddings_snapshot = _embeddings
+
         # 1. Embed the query
         query_emb = _embedding_model.encode([query], convert_to_numpy=True)
-        
+
         # 2. Compute semantic similarity against all chunks
-        similarities = cosine_similarity(query_emb, _embeddings)[0]
-        
+        similarities = cosine_similarity(query_emb, embeddings_snapshot)[0]
+
         # 3. Hybrid Keyword Boost (Sparse Retrieval)
         # Extract meaningful keywords from the query (e.g., names, IDs)
         # Filter out common stop words and short words
@@ -200,7 +260,7 @@ def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
 
         if keywords:
             # For each chunk, count how many unique keywords it contains
-            for i, chunk_text in enumerate(_chunks):
+            for i, chunk_text in enumerate(chunks_snapshot):
                 chunk_lower = chunk_text.lower()
                 matches = sum(1 for kw in keywords if kw in chunk_lower)
                 
@@ -212,9 +272,9 @@ def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
                     
         # 4. Get top-K indices (sorted descending)
         top_indices = np.argsort(similarities)[-top_k:][::-1]
-        
-        # 4. Fetch the actual text chunks
-        docs = [_chunks[i] for i in top_indices]
+
+        # 5. Fetch the actual text chunks
+        docs = [chunks_snapshot[i] for i in top_indices]
         
         if not docs:
             return None
