@@ -73,17 +73,9 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
         pdid = entities["pdid"]
         return f"I couldn't find any document with Tracking No. {pdid}. Please double-check the Tracking No. and try again."
 
-    # --- Document status with data --- 
-    if intent == "document_status" and document:
-        return _format_document_status(document)
-
     # --- Document status but no PDID provided ---
     if intent == "document_status" and "pdid" not in entities:
         return "I can help you check your document status. What is the Tracking No. of your document?"
-
-    # --- Follow-up with document data ---
-    if intent == "follow_up" and document:
-        return _format_document_status(document)
 
     # --- Follow-up without PDID ---
     if intent == "follow_up" and "pdid" not in entities:

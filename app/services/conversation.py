@@ -10,8 +10,10 @@ Handles:
 6. Chat logging
 """
 
+import json
 import uuid
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session as DBSession
 
@@ -35,7 +37,7 @@ def get_or_create_session(db: DBSession, session_id: Optional[str] = None) -> Se
     if session_id:
         session = db.query(Session).filter(Session.id == session_id).first()
         if session:
-            session.last_active = datetime.utcnow()
+            session.last_active = datetime.now(timezone.utc)
             db.commit()
             return session
 
@@ -58,34 +60,35 @@ def update_session_context(db: DBSession, session: Session, key: str, value: Any
     db.commit()
 
 
-async def process_message(
+@dataclass
+class PipelineResult:
+    """Result of the shared chat pipeline logic."""
+    session: Any
+    intent: str
+    confidence: float
+    entities: Dict[str, str]
+    context: dict
+    document: Optional[Dict[str, Any]]
+    rag_context: Optional[str]
+
+
+async def _run_pipeline(
     db: DBSession,
     message: str,
     session_id: Optional[str] = None,
-    language: str = "en",
     topic: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> PipelineResult:
     """
-    Process a user message through the full AI pipeline.
+    Shared pipeline logic used by both process_message and stream_message.
 
-    Pipeline:
-    1. Get/create session
-    2. Classify intent
-    3. Extract entities (PDID)
-    4. Check session context for pending PDID from previous turn
-    5. Fetch document from DTS if PDID available
-    6. Generate response (LLM if enabled, template as fallback)
-    7. Log messages
+    Handles:
+    1. Session creation/retrieval
+    2. Intent classification + topic enforcement
+    3. Entity extraction + multi-turn context (pending PDID)
+    4. DTS document fetch
+    5. RAG retrieval + state management
 
-    Args:
-        db: Database session
-        message: Raw user message
-        session_id: Optional session ID for multi-turn context
-        language: Language hint (kept for API compatibility)
-        topic: User-selected topic ('docs' or 'lgu'). Enforces strict intent routing.
-
-    Returns:
-        Dict with reply, session_id, intent, confidence, entities
+    Returns a PipelineResult with all computed values.
     """
     # 1. Session
     session = get_or_create_session(db, session_id)
@@ -100,11 +103,9 @@ async def process_message(
     # docs mode: only allow document tracking intents
     # lgu mode: only allow knowledge/RAG intents, never ask for PDID
     if topic == "docs":
-        # If classifier said lgu_query, tourism_query, or unknown, keep it as document_status
         if intent in ("lgu_query", "tourism_query", "unknown"):
             intent = "document_status"
     elif topic == "lgu":
-        # If classifier said document_status or follow_up (without PDID), force to lgu_query
         if intent in ("document_status", "follow_up") and "pdid" not in entities:
             intent = "lgu_query"
 
@@ -115,16 +116,10 @@ async def process_message(
     # If the user provides a PDID (or just a number) and we were waiting for one
     if "pdid" in entities and pending_intent == "document_status":
         intent = "follow_up"
-        # Clear the pending state
         update_session_context(db, session, "pending_intent", None)
-
-    # If intent is document_status but no PDID, only remember we need one if the user
-    # clearly hasn't given us any document name or keywords (pure PDID tracking request).
-    # We will OVERRIDE this below if RAG retrieves a valid result instead.
 
     # Also check if there's a PDID in context from a previous message
     if "pdid" not in entities and context.get("last_pdid"):
-        # Only use context PDID if the current intent is related
         if intent in ("document_status", "follow_up"):
             entities["pdid"] = context["last_pdid"]
 
@@ -137,118 +132,14 @@ async def process_message(
     if "pdid" in entities:
         document = await get_document(entities["pdid"])
 
-    # 5b. RAG retrieval — fetch relevant ELA document context
+    # 5b. RAG retrieval — fetch relevant document context
     rag_context = None
     if settings.USE_RAG and rag_service.is_ready() and topic != "docs":
-        # Only retrieve RAG context for general queries, unknown intents, or 
-        # document queries that didn't have a specific PDID match.
-        # Skip for explicit tracking commands where we already have the document, greetings, etc.
         if not document and intent in ("lgu_query", "tourism_query", "unknown", "document_status", "follow_up"):
             rag_context = rag_service.retrieve_context(
                 query=message,
                 top_k=settings.RAG_TOP_K,
             )
-
-    # If RAG found results, we are in knowledge-base mode — clear any pending tracking state.
-    # This allows follow-up messages like "HOW ABOUT [name]?" to also search RAG
-    # instead of being mistakenly treated as a PDID reply.
-    if rag_context:
-        update_session_context(db, session, "pending_intent", None)
-        # Reclassify follow_up to lgu_query when RAG found results (e.g. "HOW ABOUT [name]?").
-        # Do NOT reclassify document_status — "What is the status of my document?" is an
-        # explicit tracking request; we must ask for PDID, not return generic LGU content.
-        if intent == "follow_up" and "pdid" not in entities and not document:
-            intent = "lgu_query"
-    elif intent == "document_status" and "pdid" not in entities and not document:
-        # Only set pending_intent if RAG also found nothing useful.
-        update_session_context(db, session, "pending_intent", "document_status")
-
-    # ── Hard guard: PDID provided but not found in DTS → skip LLM entirely ──
-    # This is the absolute firewall. If we have a PDID but DTS returned no document,
-    # we NEVER let the LLM respond — it will hallucinate. Use the clean template.
-    if "pdid" in entities and not document:
-        reply = generate_response(intent, entities, document, context, topic=topic)
-        log_message(db, session.id, "user", message, intent, confidence, entities)
-        log_message(db, session.id, "bot", reply)
-        return {
-            "reply": reply,
-            "session_id": session.id,
-            "intent": intent,
-            "confidence": round(confidence, 4),
-            "entities": entities,
-        }
-
-    # 6. Generate response — try LLM first, fall back to templates
-    reply = None
-    if settings.USE_LLM:
-        try:
-            reply = await generate_llm_response(intent, entities, document, context, rag_context=rag_context, user_message=message)
-        except Exception as e:
-            print(f"LLM generation failed, falling back to template: {e}")
-
-    if not reply:
-        # Fallback to template generator
-        reply = generate_response(intent, entities, document, context, topic=topic)
-
-    # 7. Log messages
-    log_message(db, session.id, "user", message, intent, confidence, entities)
-    log_message(db, session.id, "bot", reply)
-
-    return {
-        "reply": reply,
-        "session_id": session.id,
-        "intent": intent,
-        "confidence": round(confidence, 4),
-        "entities": entities,
-    }
-
-import json
-
-async def stream_message(
-    db: DBSession,
-    message: str,
-    session_id: Optional[str] = None,
-    language: str = "en",
-    topic: Optional[str] = None,
-):
-    """
-    Process a user message and yield Server-Sent Events (SSE).
-    """
-    # 1. Session setup
-    session = get_or_create_session(db, session_id)
-    intent, confidence = classifier.predict(message)
-    entities = extract_entities(message)
-
-    # ── Strict topic enforcement ──
-    if topic == "docs":
-        if intent in ("lgu_query", "tourism_query", "unknown"):
-            intent = "document_status"
-    elif topic == "lgu":
-        if intent in ("document_status", "follow_up") and "pdid" not in entities:
-            intent = "lgu_query"
-
-    context = dict(session.context) if session.context else {}
-    pending_intent = context.get("pending_intent")
-
-    if "pdid" in entities and pending_intent == "document_status":
-        intent = "follow_up"
-        update_session_context(db, session, "pending_intent", None)
-    # NOTE: pending_intent for document_status is set BELOW, only when RAG finds nothing.
-    if "pdid" not in entities and context.get("last_pdid"):
-        if intent in ("document_status", "follow_up"):
-            entities["pdid"] = context["last_pdid"]
-    if "pdid" in entities:
-        update_session_context(db, session, "last_pdid", entities["pdid"])
-
-
-    document = None
-    if "pdid" in entities:
-        document = await get_document(entities["pdid"])
-
-    rag_context = None
-    if settings.USE_RAG and rag_service.is_ready() and not document and topic != "docs":
-        if intent in ("lgu_query", "tourism_query", "unknown", "document_status", "follow_up"):
-            rag_context = rag_service.retrieve_context(query=message, top_k=settings.RAG_TOP_K)
 
     # If RAG found results, clear pending tracking state so follow-up messages
     # (like "HOW ABOUT [name]?") also search RAG instead of being treated as PDID replies.
@@ -261,28 +152,116 @@ async def stream_message(
     elif intent == "document_status" and "pdid" not in entities and not document:
         update_session_context(db, session, "pending_intent", "document_status")
 
-    # First yield the metadata (intent, entities, sessionid)
+    return PipelineResult(
+        session=session,
+        intent=intent,
+        confidence=confidence,
+        entities=entities,
+        context=context,
+        document=document,
+        rag_context=rag_context,
+    )
+
+
+async def process_message(
+    db: DBSession,
+    message: str,
+    session_id: Optional[str] = None,
+    language: str = "en",
+    topic: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Process a user message through the full AI pipeline.
+
+    Pipeline:
+    1. Run shared pipeline (classify, extract, fetch, RAG)
+    2. Generate response (LLM if enabled, template as fallback)
+    3. Log messages
+
+    Args:
+        db: Database session
+        message: Raw user message
+        session_id: Optional session ID for multi-turn context
+        language: Language hint (kept for API compatibility)
+        topic: User-selected topic ('docs' or 'lgu'). Enforces strict intent routing.
+
+    Returns:
+        Dict with reply, session_id, intent, confidence, entities
+    """
+    p = await _run_pipeline(db, message, session_id, topic)
+
+    # ── Hard guard: PDID provided but not found in DTS → skip LLM entirely ──
+    if "pdid" in p.entities and not p.document:
+        reply = generate_response(p.intent, p.entities, p.document, p.context, topic=topic)
+        log_message(db, p.session.id, "user", message, p.intent, p.confidence, p.entities)
+        log_message(db, p.session.id, "bot", reply)
+        return {
+            "reply": reply,
+            "session_id": p.session.id,
+            "intent": p.intent,
+            "confidence": round(p.confidence, 4),
+            "entities": p.entities,
+        }
+
+    # Generate response — try LLM first, fall back to templates
+    reply = None
+    if settings.USE_LLM:
+        try:
+            reply = await generate_llm_response(
+                p.intent, p.entities, p.document, p.context,
+                rag_context=p.rag_context, user_message=message,
+            )
+        except Exception as e:
+            print(f"LLM generation failed, falling back to template: {e}")
+
+    if not reply:
+        reply = generate_response(p.intent, p.entities, p.document, p.context, topic=topic)
+
+    # Log messages
+    log_message(db, p.session.id, "user", message, p.intent, p.confidence, p.entities)
+    log_message(db, p.session.id, "bot", reply)
+
+    return {
+        "reply": reply,
+        "session_id": p.session.id,
+        "intent": p.intent,
+        "confidence": round(p.confidence, 4),
+        "entities": p.entities,
+    }
+
+
+async def stream_message(
+    db: DBSession,
+    message: str,
+    session_id: Optional[str] = None,
+    language: str = "en",
+    topic: Optional[str] = None,
+):
+    """
+    Process a user message and yield Server-Sent Events (SSE).
+    """
+    p = await _run_pipeline(db, message, session_id, topic)
+
+    # First yield the metadata (intent, entities, session_id)
     metadata = {
-        "session_id": session.id,
-        "intent": intent,
-        "confidence": round(confidence, 4),
-        "entities": entities,
+        "session_id": p.session.id,
+        "intent": p.intent,
+        "confidence": round(p.confidence, 4),
+        "entities": p.entities,
     }
     yield f"data: {json.dumps(metadata)}\n\n"
 
     # ── Hard guard: PDID provided but not found in DTS → skip LLM entirely ──
-    if "pdid" in entities and not document:
-        reply = generate_response(intent, entities, document, context, topic=topic)
-        log_message(db, session.id, "user", message, intent, confidence, entities)
-        log_message(db, session.id, "bot", reply)
-        # Yield the text data first
+    if "pdid" in p.entities and not p.document:
+        reply = generate_response(p.intent, p.entities, p.document, p.context, topic=topic)
+        log_message(db, p.session.id, "user", message, p.intent, p.confidence, p.entities)
+        log_message(db, p.session.id, "bot", reply)
         yield f"data: {json.dumps({'text': reply})}\n\n"
-        # Then close the stream with metadata
         done_meta = json.dumps({
-            "session_id": session.id,
-            "intent": intent,
-            "confidence": round(confidence, 4),
-            "entities": entities,
+            "session_id": p.session.id,
+            "intent": p.intent,
+            "confidence": round(p.confidence, 4),
+            "entities": p.entities,
             "language": language,
         })
         yield f"data: [DONE]{done_meta}\n\n"
@@ -294,21 +273,19 @@ async def stream_message(
     if settings.USE_LLM:
         from app.services.llm_client import generate_llm_response_stream
         
-        # This returns an httpx.Response object set to stream
         response_stream = await generate_llm_response_stream(
-            intent, entities, document, context, rag_context=rag_context, user_message=message
+            p.intent, p.entities, p.document, p.context,
+            rag_context=p.rag_context, user_message=message,
         )
         
         if response_stream:
             try:
-                # The LLM Service returns SSE events like: data: {"token": "..."}
                 async for line in response_stream.aiter_lines():
                     line = line.strip()
                     if not line or not line.startswith("data: "):
                         continue
                     
                     try:
-                        # Strip 'data: ' prefix
                         json_str = line[6:]
                         chunk_data = json.loads(json_str)
                         
@@ -322,39 +299,35 @@ async def stream_message(
                         text_chunk = chunk_data.get("token", "")
                         if text_chunk:
                             full_reply += text_chunk
-                            # Forward it to the Flutter client in its expected format
                             yield f"data: {json.dumps({'text': text_chunk})}\n\n"
                     except json.JSONDecodeError:
                         continue
             except Exception as e:
                 print(f"Error streaming LLM response: {e}")
             finally:
-                # Always safely close the httpx stream
                 await response_stream.aclose()
                 
     # If no LLM streaming occurred/succeeded, fallback to template
     if not full_reply:
-        full_reply = generate_response(intent, entities, document, context, topic=topic)
+        full_reply = generate_response(p.intent, p.entities, p.document, p.context, topic=topic)
         done_meta = json.dumps({
-            "session_id": session.id,
-            "intent": intent,
-            "confidence": round(confidence, 4),
-            "entities": entities,
+            "session_id": p.session.id,
+            "intent": p.intent,
+            "confidence": round(p.confidence, 4),
+            "entities": p.entities,
             "language": language,
         })
-        # Yield the full template response at once, guaranteeing [DONE] is trailing
         yield f"data: {json.dumps({'text': full_reply})}\n\ndata: [DONE]{done_meta}\n\n"
     else:
         done_meta = json.dumps({
-            "session_id": session.id,
-            "intent": intent,
-            "confidence": round(confidence, 4),
-            "entities": entities,
+            "session_id": p.session.id,
+            "intent": p.intent,
+            "confidence": round(p.confidence, 4),
+            "entities": p.entities,
             "language": language,
         })
-        # Send completion event for LLM streams
         yield f"data: [DONE]{done_meta}\n\n"
     
     # Log the complete interaction
-    log_message(db, session.id, "user", message, intent, confidence, entities)
-    log_message(db, session.id, "bot", full_reply)
+    log_message(db, p.session.id, "user", message, p.intent, p.confidence, p.entities)
+    log_message(db, p.session.id, "bot", full_reply)

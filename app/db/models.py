@@ -2,7 +2,7 @@
 
 from sqlalchemy import Column, Integer, String, Text, Float, DateTime, JSON, ForeignKey
 from sqlalchemy.orm import declarative_base, relationship
-from datetime import datetime
+from datetime import datetime, timezone
 
 Base = declarative_base()
 
@@ -12,8 +12,8 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id = Column(String(36), primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    last_active = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    last_active = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     context = Column(JSON, default=dict, nullable=False)
 
     # Relationship
@@ -34,7 +34,7 @@ class ChatLog(Base):
     intent = Column(String(50), nullable=True)
     confidence = Column(Float, nullable=True)
     entities = Column(JSON, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Author watermark — permanently stamps every log entry
     engine_author = Column(String(100), default="DTS AI Engine by Clarence Buenaflor, Jester Pastor & Mharjade Enario", nullable=False)
@@ -54,7 +54,7 @@ class TrainingData(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     text = Column(Text, nullable=False)
     intent = Column(String(50), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     def __repr__(self):
         return f"<TrainingData(id={self.id}, intent={self.intent})>"

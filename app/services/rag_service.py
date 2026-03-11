@@ -173,7 +173,7 @@ def add_document_to_index(text: str, filename: str = "unknown") -> int:
     Raises:
         RuntimeError: If the embedding model is not yet loaded.
     """
-    global _chunks, _embeddings, _embedding_model, _rag_ready
+    global _chunks, _chunk_filenames, _embeddings, _embedding_model, _rag_ready
 
     if _embedding_model is None:
         raise RuntimeError("[RAG] Embedding model is not loaded. Call initialize_rag() first.")

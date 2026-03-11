@@ -303,7 +303,8 @@ async def get_document(pdid: str) -> Optional[Dict[str, Any]]:
                 return None
             else:
                 response.raise_for_status()
-    except httpx.HTTPError:
+    except httpx.HTTPError as e:
+        logger.error(f"DTS API request failed for PDID {pdid_clean}: {e}")
         return None
 
     return None

@@ -19,7 +19,7 @@ from app.schemas.chat import (
     RagDeleteRequest, RagDeleteResponse
 )
 from app.services import rag_service
-from app.services.conversation import process_message, classifier
+from app.services.conversation import process_message, stream_message, classifier
 from app.config import settings
 from app.rate_limiter import limiter
 
@@ -47,8 +47,6 @@ async def chat(request: Request, chat_request: ChatRequest, db: DBSession = Depe
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
-from app.services.conversation import stream_message
-
 
 async def _stream_with_error_handling(db, message, session_id, language, topic):
     """Wrap stream_message to catch and surface streaming errors as SSE events."""
@@ -74,19 +72,16 @@ async def chat_stream(request: Request, chat_request: ChatRequest, db: DBSession
     Yields chunks of the AI's response as they are generated.
     Errors during streaming are yielded as SSE events with an "error" field.
     """
-    try:
-        return StreamingResponse(
-            _stream_with_error_handling(
-                db=db,
-                message=chat_request.message,
-                session_id=chat_request.session_id,
-                language=chat_request.language,
-                topic=chat_request.topic,
-            ),
-            media_type="text/event-stream"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing stream: {str(e)}")
+    return StreamingResponse(
+        _stream_with_error_handling(
+            db=db,
+            message=chat_request.message,
+            session_id=chat_request.session_id,
+            language=chat_request.language,
+            topic=chat_request.topic,
+        ),
+        media_type="text/event-stream"
+    )
 
 
 @router.post("/train", response_model=TrainResponse)
@@ -181,6 +176,12 @@ def _strip_markdown(text: str) -> str:
     text = text.replace("• ", "")
     # Ignore slash signs when reading
     text = text.replace("/", " ")
+    # Custom pronunciation corrections for local names/words
+    _PRONUNCIATIONS = {
+        r'\bYves\b': 'Yeves',
+    }
+    for pattern, replacement in _PRONUNCIATIONS.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     # Convert newlines to natural pauses
     text = re.sub(r'\n+', '. ', text)
     # Clean up extra whitespace
@@ -198,10 +199,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
     Supports English and Filipino voices.
 
     Available voices:
-    - en-US-JennyNeural (English, female - default)
-    - en-US-AriaNeural (English, female)
-    - en-US-GuyNeural (English, male)
-    - fil-PH-BlessicaNeural (Filipino, female)
+    - en-US-GuyNeural (English, male - default)
     - fil-PH-AngeloNeural (Filipino, male)
     """
     # Strip markdown from text first so detection is clean
@@ -210,19 +208,17 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text is empty after cleaning.")
 
-    # Validate or auto-detect voice
+    # Use the user's explicit voice choice; only auto-detect when they sent the default
     voice = tts_request.voice
     
-    # Auto-detect language to ensure the correct voice is used
-    # (Since the frontend might always send a specific voice regardless of the language)
-    try:
-        detected_lang = detect(clean_text)
-        if detected_lang == 'en':
-            voice = "en-US-GuyNeural"
-        elif detected_lang == 'tl':
-            voice = "fil-PH-AngeloNeural"
-    except Exception:
-        pass # fallback to requested voice if detection fails
+    if voice == "en-US-GuyNeural":
+        # Default voice — auto-detect language to pick the best match
+        try:
+            detected_lang = detect(clean_text)
+            if detected_lang == 'tl':
+                voice = "fil-PH-AngeloNeural"
+        except Exception:
+            pass  # keep default if detection fails
 
     if voice not in ALLOWED_VOICES:
         raise HTTPException(
