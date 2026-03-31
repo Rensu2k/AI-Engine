@@ -16,10 +16,12 @@ from app.schemas.chat import (
     HealthResponse,
     TTSRequest,
     RagIngestRequest, RagIngestResponse,
-    RagDeleteRequest, RagDeleteResponse
+    RagDeleteRequest, RagDeleteResponse,
+    TopicSelectRequest, TopicSelectResponse,
 )
 from app.services import rag_service
 from app.services.conversation import process_message, stream_message, classifier
+from app.services.response_generator import generate_topic_welcome
 from app.config import settings
 from app.rate_limiter import limiter
 
@@ -46,6 +48,39 @@ async def chat(request: Request, chat_request: ChatRequest, db: DBSession = Depe
         return ChatResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+
+
+@router.post("/topic-select", response_model=TopicSelectResponse)
+@limiter.limit("30/minute")
+async def topic_select(request: Request, payload: TopicSelectRequest, db: DBSession = Depends(get_db)):
+    """
+    Topic-selection endpoint.
+
+    Called when the user chooses between 'Document Tracking' (docs) or
+    'General Services' (lgu) in the chat UI. Returns a contextual welcome
+    message and a session ID to use for all subsequent chat calls.
+    """
+    from app.services.conversation import get_or_create_session
+    from app.services.chat_logger import log_message
+
+    VALID_TOPICS = {"docs", "lgu"}
+    if payload.topic not in VALID_TOPICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid topic '{payload.topic}'. Must be one of: {', '.join(sorted(VALID_TOPICS))}"
+        )
+
+    session = get_or_create_session(db, payload.session_id)
+    welcome = generate_topic_welcome(payload.topic)
+
+    # Log the bot's welcome as a chat message so history is preserved
+    log_message(db, session.id, "bot", welcome)
+
+    return TopicSelectResponse(
+        reply=welcome,
+        session_id=session.id,
+        topic=payload.topic,
+    )
 
 
 async def _stream_with_error_handling(db, message, session_id, language, topic):

@@ -99,3 +99,19 @@ class RagDeleteResponse(BaseModel):
     success: bool
     message: str
     chunks_deleted: int
+
+
+class TopicSelectRequest(BaseModel):
+    """Request body for POST /api/topic-select."""
+    topic: str = Field(
+        ...,
+        description="The topic mode selected by the user: 'docs' (Document Tracking) or 'lgu' (General Services)"
+    )
+    session_id: Optional[str] = Field(None, description="Existing session ID to continue, or omit to start fresh")
+
+
+class TopicSelectResponse(BaseModel):
+    """Response body for POST /api/topic-select."""
+    reply: str = Field(..., description="Welcome message for the selected topic")
+    session_id: str = Field(..., description="Session ID to use for subsequent chat messages")
+    topic: str = Field(..., description="The confirmed selected topic")

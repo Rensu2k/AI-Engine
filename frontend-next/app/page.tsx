@@ -12,21 +12,19 @@ type Message = {
   isTyping?: boolean;
 };
 
+type TopicMode = 'docs' | 'lgu' | null;
+
 export default function ChatApp() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: 'Hello! I am the DTS AI Assistant. How can I help you track your documents today?'
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
-  const [topic, setTopic] = useState('general');
+  const [topic, setTopic] = useState<TopicMode>(null);
   const [language, setLanguage] = useState('en');
   const [useStreaming, setUseStreaming] = useState(true);
   const [isEngineOnline, setIsEngineOnline] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  
+  const [isSelectingTopic, setIsSelectingTopic] = useState(true);
+  const [isTopicLoading, setIsTopicLoading] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Check backend health
@@ -41,10 +39,7 @@ export default function ChatApp() {
 
   // Configure marked for markdown parsing
   useEffect(() => {
-    marked.setOptions({
-      breaks: true,
-      gfm: true
-    });
+    marked.setOptions({ breaks: true, gfm: true });
   }, []);
 
   // Auto-scroll to bottom
@@ -62,23 +57,58 @@ export default function ChatApp() {
     e.target.style.height = `${e.target.scrollHeight}px`;
   };
 
-  const startNewChat = () => {
-    setSessionId(null);
-    setMessages([
-      {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: 'Hello! I am the DTS AI Assistant. Starting a new conversation. How can I help you today?'
-      }
-    ]);
+  // ── Topic selection ──────────────────────────────────────────────────────
+  const handleTopicSelect = async (selectedTopic: TopicMode) => {
+    if (!selectedTopic) return;
+    setIsTopicLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/topic-select`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: selectedTopic, session_id: sessionId }),
+      });
+
+      if (!res.ok) throw new Error('Failed to contact AI Engine');
+
+      const data = await res.json();
+      setSessionId(data.session_id);
+      setTopic(selectedTopic);
+      setIsSelectingTopic(false);
+      setMessages([{ id: crypto.randomUUID(), role: 'assistant', content: data.reply }]);
+    } catch {
+      // Offline fallback — still enter chat mode with a hardcoded welcome
+      setTopic(selectedTopic);
+      setIsSelectingTopic(false);
+      setMessages([
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content:
+            selectedTopic === 'docs'
+              ? "📄 **Document Tracking Mode**\n\nProvide your Tracking No. and I'll look it up for you!"
+              : '🏛️ **General Services Mode**\n\nHow can I help you with Surigao City services today?',
+        },
+      ]);
+    } finally {
+      setIsTopicLoading(false);
+    }
   };
 
-  const handleStandardResponse = async (payload: any, botMsgId: string) => {
+  const startNewChat = () => {
+    setSessionId(null);
+    setTopic(null);
+    setIsSelectingTopic(true);
+    setMessages([]);
+  };
+
+  // ── Standard (non-streaming) response ───────────────────────────────────
+  const handleStandardResponse = async (payload: object, botMsgId: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -88,47 +118,47 @@ export default function ChatApp() {
 
       const data = await response.json();
       setSessionId(data.session_id);
-      
-      setMessages(prev => prev.map(msg => 
-        msg.id === botMsgId 
-          ? { ...msg, content: data.reply, isTyping: false }
-          : msg
-      ));
-    } catch (error: any) {
-      setMessages(prev => prev.map(msg => 
-        msg.id === botMsgId 
-          ? { ...msg, content: `**Error:** Could not connect to the AI Engine. (${error.message})`, isTyping: false }
-          : msg
-      ));
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === botMsgId ? { ...msg, content: data.reply, isTyping: false } : msg
+        )
+      );
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === botMsgId
+            ? { ...m, content: `**Error:** Could not connect to the AI Engine. (${msg})`, isTyping: false }
+            : m
+        )
+      );
     }
   };
 
-  const handleStreamingResponse = async (payload: any, botMsgId: string) => {
+  // ── Streaming response ───────────────────────────────────────────────────
+  const handleStreamingResponse = async (payload: object, botMsgId: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream'
-        },
-        body: JSON.stringify(payload)
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || `Server error: ${response.status}`);
+        throw new Error((errData as { detail?: string }).detail || `Server error: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body reader.");
+      if (!reader) throw new Error('No response body reader.');
       const decoder = new TextDecoder('utf-8');
-      
+
       let fullReply = '';
       let buffer = '';
 
-      setMessages(prev => prev.map(msg => 
-        msg.id === botMsgId ? { ...msg, isTyping: false, content: '' } : msg
-      ));
+      setMessages(prev =>
+        prev.map(msg => (msg.id === botMsgId ? { ...msg, isTyping: false, content: '' } : msg))
+      );
 
       while (true) {
         const { value, done } = await reader.read();
@@ -145,57 +175,60 @@ export default function ChatApp() {
           const dataStr = line.substring(6).trim();
 
           if (dataStr.startsWith('[DONE]')) {
-            const doneJson = dataStr.substring(6);
             try {
-              const parsed = JSON.parse(doneJson);
+              const parsed = JSON.parse(dataStr.substring(6));
               if (parsed.session_id && !sessionId) setSessionId(parsed.session_id);
-            } catch (e) {}
+            } catch {
+              // ignore
+            }
             continue;
           }
 
           try {
             const parsed = JSON.parse(dataStr);
             if (parsed.error) throw new Error(parsed.error);
-
             if (parsed.text !== undefined) {
               fullReply += parsed.text;
-              
-              setMessages(prev => prev.map(msg => 
-                msg.id === botMsgId ? { ...msg, content: fullReply } : msg
-              ));
+              setMessages(prev =>
+                prev.map(msg => (msg.id === botMsgId ? { ...msg, content: fullReply } : msg))
+              );
             } else if (parsed.session_id !== undefined && !sessionId) {
               setSessionId(parsed.session_id);
             }
-          } catch (e) {}
+          } catch {
+            // ignore malformed chunks
+          }
         }
       }
-    } catch (error: any) {
-      setMessages(prev => prev.map(msg => 
-        msg.id === botMsgId 
-          ? { ...msg, content: `**Error during stream:** ${error.message}`, isTyping: false }
-          : msg
-      ));
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === botMsgId
+            ? { ...m, content: `**Error during stream:** ${msg}`, isTyping: false }
+            : m
+        )
+      );
     }
   };
 
+  // ── Submit handler ───────────────────────────────────────────────────────
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const messageText = inputMessage.trim();
     if (!messageText) return;
 
-    // Add user message
     const userMsgId = crypto.randomUUID();
     setMessages(prev => [...prev, { id: userMsgId, role: 'user', content: messageText }]);
-    
+
     setInputMessage('');
-    const textarea = document.getElementById('messageInput');
+    const textarea = document.getElementById('messageInput') as HTMLTextAreaElement | null;
     if (textarea) textarea.style.height = 'auto';
 
-    // Add bot typing placeholder
     const botMsgId = crypto.randomUUID();
     setMessages(prev => [...prev, { id: botMsgId, role: 'assistant', content: '', isTyping: true }]);
 
-    const payload: any = { message: messageText, language, topic };
+    const payload: Record<string, unknown> = { message: messageText, language, topic };
     if (sessionId) payload.session_id = sessionId;
 
     if (useStreaming) {
@@ -212,36 +245,54 @@ export default function ChatApp() {
     }
   };
 
+  const topicLabel =
+    topic === 'docs' ? '📄 Document Tracking' : topic === 'lgu' ? '🏛️ General Services' : '';
+
   return (
     <div className="app-container">
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="logo">
-          <div className="logo-icon"></div>
+          <div className="logo-icon" />
           <h2>DTS AI</h2>
         </div>
-        
+
         <button className="new-chat-btn" onClick={startNewChat}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           New Chat
         </button>
-        
+
+        {/* Active topic badge */}
+        {topic && (
+          <div className="setting-item" style={{ marginTop: '8px' }}>
+            <label>Active Mode</label>
+            <div
+              style={{
+                padding: '6px 10px',
+                borderRadius: '8px',
+                background: topic === 'docs' ? 'rgba(99,102,241,0.15)' : 'rgba(16,185,129,0.15)',
+                color: topic === 'docs' ? '#818cf8' : '#34d399',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+              }}
+            >
+              {topicLabel}
+            </div>
+          </div>
+        )}
+
         <div className="settings-section">
           <h3>Settings</h3>
           <div className="setting-item">
-            <label htmlFor="topicSelect">Topic Context</label>
-            <select id="topicSelect" value={topic} onChange={(e) => setTopic(e.target.value)}>
-              <option value="general">General Inquiry</option>
-              <option value="document_status">Document Status</option>
-              <option value="technical_support">Technical Support</option>
-            </select>
-          </div>
-          <div className="setting-item">
             <label htmlFor="languageSelect">Response Language</label>
-            <select id="languageSelect" value={language} onChange={(e) => setLanguage(e.target.value)}>
+            <select
+              id="languageSelect"
+              value={language}
+              onChange={e => setLanguage(e.target.value)}
+            >
               <option value="en">English</option>
               <option value="tl">Filipino (Tagalog)</option>
             </select>
@@ -249,14 +300,18 @@ export default function ChatApp() {
           <div className="setting-item">
             <label className="toggle-label">
               <span>Streaming</span>
-              <input type="checkbox" checked={useStreaming} onChange={(e) => setUseStreaming(e.target.checked)} />
-              <span className="toggle-slider"></span>
+              <input
+                type="checkbox"
+                checked={useStreaming}
+                onChange={e => setUseStreaming(e.target.checked)}
+              />
+              <span className="toggle-slider" />
             </label>
           </div>
         </div>
-        
+
         <div className="sidebar-footer">
-          <div className={`status-indicator ${isEngineOnline ? 'online' : 'offline'}`}></div>
+          <div className={`status-indicator ${isEngineOnline ? 'online' : 'offline'}`} />
           <span>Engine {isEngineOnline ? 'Online' : 'Offline'}</span>
         </div>
       </aside>
@@ -266,52 +321,115 @@ export default function ChatApp() {
         <header className="chat-header">
           <div className="header-info">
             <h1>AI Assistant</h1>
-            <p>Next.js Internal Test Environment</p>
+            <p>{topic ? topicLabel : 'Select a topic to get started'}</p>
           </div>
         </header>
 
-        <div className="chat-messages">
-          {messages.map((msg) => (
-            <div key={msg.id} className={`message ${msg.role}`}>
-              <div className="message-avatar">{msg.role === 'user' ? 'ME' : 'AI'}</div>
-              <div className="message-content">
-                {msg.isTyping ? (
-                  <div className="typing-indicator">
-                    <div className="typing-dot"></div>
-                    <div className="typing-dot"></div>
-                    <div className="typing-dot"></div>
+        {/* ── Topic Selection Screen ── */}
+        {isSelectingTopic ? (
+          <div className="topic-selection-screen">
+            <div className="topic-selection-card">
+              <div className="topic-selection-icon">🤖</div>
+              <h2>How can I help you today?</h2>
+              <p>Please choose a topic to get started.</p>
+
+              <div className="topic-buttons">
+                <button
+                  id="btn-document-tracking"
+                  className="topic-btn topic-btn-docs"
+                  onClick={() => handleTopicSelect('docs')}
+                  disabled={isTopicLoading}
+                >
+                  <span className="topic-btn-icon">📄</span>
+                  <span className="topic-btn-label">Document Tracking</span>
+                  <span className="topic-btn-desc">
+                    Check the status of your submitted documents
+                  </span>
+                </button>
+
+                <button
+                  id="btn-general-services"
+                  className="topic-btn topic-btn-lgu"
+                  onClick={() => handleTopicSelect('lgu')}
+                  disabled={isTopicLoading}
+                >
+                  <span className="topic-btn-icon">🏛️</span>
+                  <span className="topic-btn-label">General Services</span>
+                  <span className="topic-btn-desc">
+                    Ask about city services, programs &amp; tourism
+                  </span>
+                </button>
+              </div>
+
+              {isTopicLoading && (
+                <div className="topic-loading">
+                  <div className="typing-indicator" style={{ justifyContent: 'center' }}>
+                    <div className="typing-dot" />
+                    <div className="typing-dot" />
+                    <div className="typing-dot" />
                   </div>
-                ) : (
-                  <div dangerouslySetInnerHTML={{ __html: marked.parse(msg.content) as string }} />
-                )}
+                  <span>Connecting…</span>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="chat-messages">
+              {messages.map(msg => (
+                <div key={msg.id} className={`message ${msg.role}`}>
+                  <div className="message-avatar">{msg.role === 'user' ? 'ME' : 'AI'}</div>
+                  <div className="message-content">
+                    {msg.isTyping ? (
+                      <div className="typing-indicator">
+                        <div className="typing-dot" />
+                        <div className="typing-dot" />
+                        <div className="typing-dot" />
+                      </div>
+                    ) : (
+                      <div
+                        dangerouslySetInnerHTML={{
+                          __html: marked.parse(msg.content) as string,
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <div className="chat-input-container">
+              <form className="chat-input-box" onSubmit={handleSubmit}>
+                <textarea
+                  id="messageInput"
+                  value={inputMessage}
+                  onChange={handleTextareaInput}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type your message here..."
+                  rows={1}
+                  required
+                />
+                <button type="submit" className="send-btn" disabled={!inputMessage.trim()}>
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <line x1="22" y1="2" x2="11" y2="13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                </button>
+              </form>
+              <div className="input-footer">
+                Powered by Next.js &amp; DTS AI Engine v1.0
               </div>
             </div>
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-
-        <div className="chat-input-container">
-          <form className="chat-input-box" onSubmit={handleSubmit}>
-            <textarea
-              id="messageInput"
-              value={inputMessage}
-              onChange={handleTextareaInput}
-              onKeyDown={handleKeyDown}
-              placeholder="Type your message here..."
-              rows={1}
-              required
-            ></textarea>
-            <button type="submit" className="send-btn" disabled={!inputMessage.trim()}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
-          </form>
-          <div className="input-footer">
-            Powered by Next.js & DTS AI Engine v1.0
-          </div>
-        </div>
+          </>
+        )}
       </main>
     </div>
   );
