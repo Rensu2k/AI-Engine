@@ -69,6 +69,11 @@ class TTSRequest(BaseModel):
         default="en-US-GuyNeural",
         description="TTS voice. Options: 'en-US-GuyNeural' (English male, default), 'fil-PH-AngeloNeural' (Filipino male)"
     )
+    auto_detect: bool = Field(
+        default=True,
+        description="When True (default), auto-detect language and pick the best voice. "
+                    "Set to False when the user has explicitly chosen a voice to prevent overriding their choice."
+    )
 
 
 class RagIngestRequest(BaseModel):

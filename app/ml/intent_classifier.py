@@ -12,11 +12,12 @@ import os
 import csv
 import threading
 import numpy as np
+from collections import Counter
 from typing import Tuple, List, Optional
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import SGDClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.calibration import CalibratedClassifierCV
 import joblib
 
 from app.ml.preprocessing import preprocess_text
@@ -76,9 +77,17 @@ class IntentClassifier:
         if len(texts) < 2:
             raise ValueError("Need at least 2 training samples")
 
-        # Build pipeline: TF-IDF → Calibrated SGD (for probability estimates)
+        # Ensure every class has at least 2 samples (required for train/val split)
+        class_counts = Counter(intents)
+        rare = [cls for cls, count in class_counts.items() if count < 2]
+        if rare:
+            raise ValueError(
+                f"Each intent class needs at least 2 samples. Under-represented: {rare}"
+            )
+
+        # Build pipeline: TF-IDF → SGDClassifier (modified_huber supports predict_proba)
         base_clf = SGDClassifier(
-            loss="modified_huber",  # Supports predict_proba natively
+            loss="modified_huber",
             max_iter=1000,
             tol=1e-3,
             random_state=42,
@@ -96,9 +105,27 @@ class IntentClassifier:
 
         new_pipeline.fit(texts, intents)
 
-        # Calculate training accuracy
-        predictions = new_pipeline.predict(texts)
-        accuracy = np.mean([p == t for p, t in zip(predictions, intents)])
+        # Calculate accuracy on a held-out validation split for an honest estimate
+        X_train, X_val, y_train, y_val = train_test_split(
+            texts, intents, test_size=0.2, random_state=42, stratify=intents
+        )
+        val_pipeline = Pipeline([
+            ("tfidf", TfidfVectorizer(
+                ngram_range=(1, 2),
+                max_features=5000,
+                sublinear_tf=True,
+            )),
+            ("clf", SGDClassifier(
+                loss="modified_huber",
+                max_iter=1000,
+                tol=1e-3,
+                random_state=42,
+                class_weight="balanced",
+            )),
+        ])
+        val_pipeline.fit(X_train, y_train)
+        val_predictions = val_pipeline.predict(X_val)
+        accuracy = np.mean([p == t for p, t in zip(val_predictions, y_val)])
 
         # Save model
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
@@ -164,5 +191,5 @@ class IntentClassifier:
         """Return the list of known intent classes."""
         with self._lock:
             if self.pipeline is not None:
-                return list(self.pipeline.classes_)
+                return list(self.pipeline.named_steps["clf"].classes_)
         return []

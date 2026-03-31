@@ -1,7 +1,7 @@
 DTS AI ENGINE — SYSTEM DOCUMENTATION
 ======================================
 Document Tracking System AI-Powered Conversational Assistant
-Version: 1.0.0 | Last Updated: March 2026
+Version: 1.1.0 | Last Updated: March 2026
 
 This document provides a complete, exhaustive technical explanation of how the DTS AI Engine was
 designed, built, and how every feature works internally. It is intended to serve as a definitive
@@ -21,8 +21,12 @@ TABLE OF CONTENTS
     6b. Intent Classifier (intent_classifier.py)
     6c. Entity Extractor (entity_extractor.py)
 7.  The Conversation Engine (conversation.py)
-8.  DTS API Client (dts_client.py)
-9.  Response Generator (response_generator.py)
+8.  Document Retrieval Services
+    8a. DTS API Client (dts_client.py)
+    8b. RAG Service (rag_service.py)
+9.  Response Generation Layer
+    9a. Template Generator (response_generator.py)
+    9b. LLM Client (llm_client.py)
 10. Database Layer
     10a. ORM Models (models.py)
     10b. Database Connection (database.py)
@@ -52,10 +56,10 @@ The DTS AI Engine is a Python-based REST API that lets users interact with the D
 System (DTS) using natural language. Instead of navigating a web portal to look up a document
 status, a user can simply type "Where is PDID 001?" and the AI engine will:
 
-  1. Understand the intent of the message (looking for document status)
-  2. Extract the document identifier (PDID 001)
-  3. Query the DTS backend API for the document's current status
-  4. Return a clean, human-readable formatted response
+  1. Understand the intent of the message (looking for document status, or general LGU inquiry)
+  2. Extract the document identifier (PDID 001) or keywords
+  3. Query the DTS backend API for the document's current status, or query the RAG index
+  4. Return a clean, human-readable formatted response or stream conversational text from the LLM
   5. Optionally speak the response aloud in English or Filipino using Text-to-Speech
   6. Remember context across multiple messages in the same conversation session
 
@@ -68,6 +72,9 @@ The system was designed with these major goals:
   - A browser-based web chat UI for easy testing and demonstration
   - Rate limiting to protect all API endpoints from abuse
   - Retrainable ML model — no code changes needed to add new intents
+  - Strict topic-based intent routing (Docs vs LGU queries)
+  - Retrieval-Augmented Generation (RAG) for local government knowledge
+  - LLM Service integration for conversational generation and Server-Sent Events (SSE) streaming
 
 
 ================================================================================
@@ -80,9 +87,10 @@ BACKEND
   - ASGI Server:      Uvicorn (serves the FastAPI app)
   - ORM:              SQLAlchemy (database models and queries)
   - Database:         MySQL (via PyMySQL driver)
-  - ML Library:       scikit-learn (TF-IDF vectorizer + SGDClassifier)
+  - ML Library:       scikit-learn (TF-IDF vectorizer, SGDClassifier, cosine similarity)
+  - Vector Search:    sentence-transformers (all-MiniLM-L6-v2 embeddings) + numpy
   - Model Storage:    joblib (serialize/deserialize trained ML models)
-  - HTTP Client:      httpx (async HTTP calls to the DTS API)
+  - HTTP Client:      httpx (async HTTP calls to DTS API and external LLM Service)
   - TTS Engine:       edge-tts (Microsoft Edge Neural TTS voices)
   - Translation:      deep-translator (Google Translate API wrapper)
   - Language Detect:  langdetect (automatically identifies Filipino/Tagalog)
@@ -123,12 +131,13 @@ The system is organized in clear, separated layers:
          │
   ┌──────▼──────────────────────────────────────┐
   │         Conversation Engine                 │
-  │   (session, intent, entity, translate)      │
+  │   (session, intent, entity, RAG, strict)    │
   └──────┬──────────────────────┬───────────────┘
          │                      │
   ┌──────▼──────┐      ┌────────▼───────────────┐
-  │  DTS Client │      │  Response Generator    │
-  │  (mock/live)│      │  (template responses)  │
+  │Retrieval srv│      │  Response Generation   │
+  │(DTS API,    │      │ (LLM stream, Template  │
+  │ RAG Service)│      │  fallback)             │
   └──────┬──────┘      └────────────────────────┘
          │
   ┌──────▼──────────────────────────────────────┐
@@ -420,9 +429,14 @@ THE FULL PIPELINE (executed for every incoming chat message):
     If a PDID is in the entities (either extracted just now or from session context), get_document()
     is called. This either returns mock data or calls the real DTS API and returns a parsed dict.
 
+  STEP 5b — RAG DOCUMENT RETRIEVAL
+    For general LGU queries or unknown intents without a PDID, rag_service.retrieve_context()
+    is called to fetch relevant knowledge base excerpts to inform the LLM.
+
   STEP 6 — RESPONSE GENERATION
-    generate_response() is called with the intent, entities, document, and context. It returns
-    a human-readable English text string.
+    The external LLM Service is called to generate a conversational response (via HTTP POST
+    or Server-Sent Events streaming). If the LLM generation fails or is explicitly bypassed
+    for exact status formatting, it falls back to generate_response() which uses templates.
 
   STEP 6b — AUTO-TRANSLATION TO FILIPINO
     After the English response is generated, the translation layer runs:
@@ -448,8 +462,12 @@ THE FULL PIPELINE (executed for every incoming chat message):
 
 
 ================================================================================
-8. DTS API CLIENT (app/services/dts_client.py)
+8. DOCUMENT RETRIEVAL SERVICES
 ================================================================================
+
+────────────────────────────────────────────────
+8a. DTS API CLIENT (app/services/dts_client.py)
+────────────────────────────────────────────────
 
 The DTS client handles all interaction with the document tracking backend. It supports two modes:
 mock mode (for development/testing) and live mode (for production with the real DTS API).
@@ -499,9 +517,31 @@ PDID NORMALIZATION:
   - .zfill(3) → re-pads to 3 digits for use as the dictionary key (e.g., "1" → "001")
 
 
+────────────────────────────────────────────────
+8b. RAG SERVICE (app/services/rag_service.py)
+────────────────────────────────────────────────
+
+The RAG (Retrieval-Augmented Generation) service allows the AI to answer general local government
+and tourism queries based on ingested documents.
+
+HOW IT WORKS:
+  - Vector Embeddings: Uses the all-MiniLM-L6-v2 SentenceTransformer to encode text.
+  - Chunking: Documents fetched from the Admin API undergo semantic chunking (500 chars with 100 overlap).
+  - Retrieval: When a query is received, it computes cosine similarity between the query embedding
+    and all indexed chunk embeddings.
+  - Hybrid Keyword Boost: Exact keyword matches grant a +0.3 boost to similarities, ensuring precise
+    lookups (e.g. names) float above generic semantic matches.
+  - Ingestion API: An endpoint (/api/rag/ingest) allows the Admin Dashboard to push new documents
+    directly into the live index, appending and saving to the `rag_cache.pkl` disk cache without restarts.
+
+
 ================================================================================
-9. RESPONSE GENERATOR (app/services/response_generator.py)
+9. RESPONSE GENERATION LAYER
 ================================================================================
+
+────────────────────────────────────────────────
+9a. TEMPLATE GENERATOR (app/services/response_generator.py)
+────────────────────────────────────────────────
 
 The response generator turns the structured (intent, entities, document) data into human-readable
 text that gets sent back to the user.
@@ -553,6 +593,23 @@ DOCUMENT STATUS FORMATTING (_format_document_status):
     showing who held it, what action was taken, TAT (turnaround time), and timestamps
   - The currently active stop is marked with a 📍 emoji and "Currently here" label
   - Past stops show "handled by" while the current stop shows "held by" for clarity
+
+────────────────────────────────────────────────
+9b. LLM CLIENT (app/services/llm_client.py)
+────────────────────────────────────────────────
+
+The LLM Client communicates with an external, centralized LLM Service to generate dynamic,
+conversational responses.
+
+HOW IT WORKS:
+  - Prompt Building: Structures a prompt injecting intent, entities, fetched documents, and RAG
+    excerpts for the external LLM to process.
+  - Strict Bypassing: If a hard-structured response (like the Document Status card) is required,
+    it returns None for the prompt, intentionally forcing `conversation.py` to bypass the LLM and
+    use the structured template generator. This prevents hallucinated status responses.
+  - Streaming Support (SSE): Via `generate_llm_response_stream()`, it calls the LLM service's
+    `/api/generate-stream` endpoint. It uses `httpx` to stream individual tokens back to the user
+    in real-time as Server-Sent Events (SSE).
 
 
 ================================================================================
@@ -624,6 +681,7 @@ for automatic JSON serialization/deserialization, input validation, and Swagger 
     - message (str, required, 1–1000 chars): The user's message
     - session_id (str, optional): UUID from a previous response to continue a conversation
     - language (str, default "en"): Language preference — "en" for English, "tl" for Filipino
+    - topic (str, optional): Enforces strict intent routing ("docs" for Tracking, "lgu" for KB)
 
   ChatResponse:
     - reply (str): The AI's response text
@@ -641,6 +699,13 @@ for automatic JSON serialization/deserialization, input validation, and Swagger 
   HealthResponse:
     - status, model_loaded, model_intents
 
+  RagIngestRequest:
+    - filename (str, required): Original filename of the uploaded document
+    - text (str, required): Extracted plain text from the document
+
+  RagIngestResponse:
+    - success (bool), message (str), chunks_added (int)
+
   TTSRequest:
     - text (str, required, 1–5000 chars): Text to convert to speech
     - voice (str, default "en-US-GuyNeural"): Which neural voice to use
@@ -656,6 +721,10 @@ All routes are registered under the /api prefix via APIRouter. There are four en
     conversation engine, and returns a ChatResponse. All ChatRequest validation is handled
     automatically by Pydantic before the function is even called.
 
+  POST /api/chat/stream (30 requests/minute per IP)
+    Streaming chat endpoint using Server-Sent Events (SSE). Yields chunks of the AI's
+    response as they are generated by the LLM in real-time.
+
   POST /api/train (5 requests/minute per IP)
     Triggers retraining of the intent classifier. If source="csv", it reads from the training
     CSV file. If source="database", it queries all rows from the training_data table and trains
@@ -668,6 +737,9 @@ All routes are registered under the /api prefix via APIRouter. There are four en
   POST /api/tts (20 requests/minute per IP)
     Text-to-Speech endpoint. Accepts text and a voice name, returns an MP3 audio stream.
     (Detailed explanation in section 13.)
+
+  POST /api/rag/ingest (no rate limit)
+    Ingests extracted text from a document into the live RAG index. Called by the Admin Dashboard.
 
 
 ================================================================================
@@ -1003,6 +1075,15 @@ EXAMPLE MULTI-TURN SESSION:
 
 This creates a natural, flowing conversation without the user having to repeat the PDID
 in every message.
+
+TOPIC ROUTING AND RAG CONTEXT:
+If the user selects a specific topic ("docs" or "lgu") in the frontend, the conversational
+engine strictly enforces intents.
+  - "docs" prevents fallback to general LGU/RAG queries, treating ambiguities as tracking numbers.
+  - "lgu" forces the intent to "lgu_query", utilizing the RAG service and skipping tracking number checks.
+Moreover, when the RAG index returns context for a query, the pending "document_status" state is cleared.
+This lets users seamlessly pivot from asking about their document status to asking a general KB question 
+("How about a business permit?") without the AI stubbornly insisting on a tracking number.
 
 
 ================================================================================

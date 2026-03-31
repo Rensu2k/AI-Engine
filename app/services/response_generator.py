@@ -61,6 +61,7 @@ def generate_response(intent: str, entities: Dict[str, str], document: Optional[
         context: Session context for multi-turn awareness
 
     Returns:
+        A human-readable response string for the user.
     """
     
     # HARD OVERRIDE: If we successfully fetched a document, ALWAYS format it 

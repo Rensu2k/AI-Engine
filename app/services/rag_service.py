@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import pickle
 import logging
 import threading
@@ -61,9 +63,8 @@ def _fetch_all_from_api(list_api_url: str) -> list:
                 if detail.get("success") and isinstance(detail.get("data"), dict):
                     extracted = detail["data"].get("extracted_data", {})
                     if isinstance(extracted, str):
-                        import json as _json
                         try:
-                            extracted = _json.loads(extracted)
+                            extracted = json.loads(extracted)
                         except Exception:
                             extracted = {}
                     text = extracted.get("text", "").strip() if isinstance(extracted, dict) else ""
@@ -175,6 +176,9 @@ def add_document_to_index(text: str, filename: str = "unknown") -> int:
     """
     global _chunks, _chunk_filenames, _embeddings, _embedding_model, _rag_ready
 
+    if not _store_dir:
+        raise RuntimeError("[RAG] RAG store directory not configured. Call initialize_rag() first.")
+
     if _embedding_model is None:
         raise RuntimeError("[RAG] Embedding model is not loaded. Call initialize_rag() first.")
 
@@ -275,7 +279,8 @@ def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
 
         with _rag_lock:
             chunks_snapshot = list(_chunks)
-            embeddings_snapshot = _embeddings
+            # Copy the array to avoid mutation from concurrent delete operations
+            embeddings_snapshot = _embeddings.copy()
 
         # 1. Embed the query
         query_emb = _embedding_model.encode([query], convert_to_numpy=True)
@@ -286,7 +291,6 @@ def retrieve_context(query: str, top_k: int = 3) -> Optional[str]:
         # 3. Hybrid Keyword Boost (Sparse Retrieval)
         # Extract meaningful keywords from the query (e.g., names, IDs)
         # Filter out common stop words and short words
-        import re
         stop_words = {"the", "and", "for", "with", "from", "that", "this", "what", "where", "how", "who", "when", "why", "are", "you", "can", "tell", "about", "status", "document", "documents", "my", "is"}
         raw_words = re.findall(r'\b[a-zA-Z0-9-]+\b', query.lower())
         keywords = [w for w in raw_words if len(w) >= 3 and w not in stop_words]

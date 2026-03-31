@@ -178,7 +178,8 @@ def _strip_markdown(text: str) -> str:
     text = text.replace("/", " ")
     # Custom pronunciation corrections for local names/words
     _PRONUNCIATIONS = {
-        r'\bYves\b': 'Yeves',
+        r'\bYves\b': 'eves',
+        r'\bII\b': 'the second',
     }
     for pattern, replacement in _PRONUNCIATIONS.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -208,11 +209,11 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text is empty after cleaning.")
 
-    # Use the user's explicit voice choice; only auto-detect when they sent the default
+    # Use the user's explicit voice choice; only auto-detect when enabled
     voice = tts_request.voice
-    
-    if voice == "en-US-GuyNeural":
-        # Default voice — auto-detect language to pick the best match
+
+    if tts_request.auto_detect and voice == "en-US-GuyNeural":
+        # Auto-detect mode — pick the best voice based on text language
         try:
             detected_lang = detect(clean_text)
             if detected_lang == 'tl':
@@ -248,7 +249,8 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
 
 
 @router.post("/rag/ingest", response_model=RagIngestResponse)
-async def rag_ingest(payload: RagIngestRequest):
+@limiter.limit("10/minute")
+async def rag_ingest(request: Request, payload: RagIngestRequest):
     """
     Ingest a document's extracted text into the live RAG index.
 
@@ -273,7 +275,8 @@ async def rag_ingest(payload: RagIngestRequest):
 
 
 @router.post("/rag/delete", response_model=RagDeleteResponse)
-async def rag_delete(payload: RagDeleteRequest):
+@limiter.limit("10/minute")
+async def rag_delete(request: Request, payload: RagDeleteRequest):
     """
     Remove a document's extracted text from the live RAG index.
 

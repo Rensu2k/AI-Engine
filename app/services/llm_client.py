@@ -78,7 +78,7 @@ async def generate_llm_response_stream(
     context: dict = None,
     rag_context: Optional[str] = None,
     user_message: str = "",
-) -> httpx.Response:
+) -> Optional[httpx.Response]:
     """
     Call the external LLM Service to generate a conversational response and stream it.
     This expects the LLM Service's /api/generate endpoint to support streaming with `stream: True`.
